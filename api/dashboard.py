@@ -216,26 +216,8 @@ async def debug_scanner():
     }
 
 
-@router.get("/debug/db")
-async def debug_db():
-    """Check database connection."""
-    from db.database import engine, db_url
-    try:
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                __import__("sqlalchemy").text("SELECT 1")
-            )
-            # Check if table exists
-            tables = await conn.execute(
-                __import__("sqlalchemy").text("SELECT tablename FROM pg_tables WHERE schemaname='public'")
-            )
-            table_list = [r[0] for r in tables]
-            return {"status": "connected", "db_type": "postgresql" if "postgresql" in db_url else "sqlite", "tables": table_list}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "url_prefix": db_url[:30] + "..."}
-
-
-# NOTE: /api/debug/write and DELETE /api/journal/clear were removed.
-# They served one-off diagnostics during the initial PostgreSQL debugging
-# on Railway and are no longer needed. Anyone with the URL could write
-# junk rows or wipe the entire journal, so they had to go.
+# NOTE: /api/debug/db, /api/debug/write and DELETE /api/journal/clear
+# were removed. They were one-off diagnostics during the initial
+# PostgreSQL setup and are no longer needed. Anyone with the URL could
+# hit them anonymously to write junk rows or wipe the entire journal,
+# so they had to go.
