@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # swing; a 20% daily loss cap allows ~20 losing trades before we stop.
     max_risk_per_trade: float = Field(default=0.01, ge=0.001, le=0.05)
     max_total_risk: float = Field(default=0.20, ge=0.01, le=0.50)
-    max_open_positions: int = Field(default=10, ge=1, le=30)
+    max_open_positions: int = Field(default=20, ge=1, le=30)
     default_rr_ratio: float = Field(default=1.5, ge=1.0, le=5.0)
 
     # ATR-based Stop Loss multiplier — tighter than swing (1.0 vs 1.5)
