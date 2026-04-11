@@ -147,21 +147,24 @@ class RiskManager:
                 f"{self.max_risk_per_trade:.2%}"
             )
 
-        # 5) Portfolio total risk check
+        # 5) Portfolio total risk check. Tiny epsilon so float drift at the
+        # exact cap boundary doesn't falsely reject a trade (e.g. 20 x 0.01
+        # coming out to 0.20000000000000004 > 0.2 in IEEE754).
         new_total_risk = current_total_risk + risk_params.risk_percent
-        if new_total_risk > self.max_total_risk:
+        if new_total_risk > self.max_total_risk + 1e-9:
             reasons.append(
                 f"סיכון כולל של התיק יגיע ל-{new_total_risk:.2%}, "
                 f"חורג מהמקסימום {self.max_total_risk:.2%}"
             )
 
-        # 6) Minimum R:R ratio check — intraday uses 1.5 as the default,
-        # so set the floor slightly below that to avoid rejecting trades
-        # just because of rounding (1.49 vs 1.50).
-        min_rr = 1.4
+        # 6) Minimum R:R ratio check — derive the floor from the configured
+        # default_rr_ratio so lowering the default in env doesn't accidentally
+        # reject every trade. Gives us ~10% tolerance under the default.
+        min_rr = max(1.0, self.default_rr_ratio - 0.1)
         if risk_params.reward_risk_ratio < min_rr:
             reasons.append(
-                f"יחס סיכוי/סיכון {risk_params.reward_risk_ratio:.1f} נמוך מהמינימום {min_rr}"
+                f"יחס סיכוי/סיכון {risk_params.reward_risk_ratio:.2f} "
+                f"נמוך מהמינימום {min_rr:.2f}"
             )
 
         # 7) RSI extremes filter

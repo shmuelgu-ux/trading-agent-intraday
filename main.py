@@ -204,13 +204,41 @@ async def lifespan(app: FastAPI):
                         last_market_check = True
                         dashboard.scanner_state["market_open_seen"] = True
 
-                    # End-of-day force close (one shot)
+                    # End-of-day force close — retry until positions are
+                    # actually flat. The flag is only set AFTER Alpaca
+                    # confirms zero open positions, so a failed first
+                    # close attempt (halted stock, transient 5xx, etc.)
+                    # will be retried on the next loop iteration with a
+                    # short sleep instead of rolling overnight.
                     if not force_close_fired and _is_past_force_close():
                         dashboard.scanner_state["last_action"] = "end of day - closing all"
                         await force_close_all_positions()
-                        force_close_fired = True
-                        # Don't open new trades after force close
-                        await asyncio.sleep(interval)
+                        # Give Alpaca a few seconds to actually fill the orders
+                        await asyncio.sleep(5)
+                        try:
+                            remaining = len(alpaca.get_open_positions())
+                        except Exception as e:
+                            logger.error(f"Force-close verify failed: {e}")
+                            remaining = -1  # unknown — stay in retry mode
+                        if remaining == 0:
+                            force_close_fired = True
+                            # Reset last_position_count so the next iteration's
+                            # "positions dropped" reconcile branch doesn't fire
+                            # redundantly (force_close_all_positions already
+                            # reconciled).
+                            last_position_count = 0
+                            logger.info("Force close complete — all positions flat")
+                            dashboard.scanner_state["last_action"] = "end of day - all closed"
+                            await asyncio.sleep(interval)
+                        else:
+                            logger.warning(
+                                f"Force close incomplete: {remaining} positions "
+                                f"still open. Retrying in 20s."
+                            )
+                            dashboard.scanner_state["last_action"] = (
+                                f"force close retrying ({remaining} open)"
+                            )
+                            await asyncio.sleep(20)
                         continue
 
                     # Current positions (used for both reconcile trigger and slot math)

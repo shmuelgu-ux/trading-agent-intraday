@@ -313,6 +313,13 @@
 
         /* Table */
         .table-wrap { overflow-x: auto; }
+        /* With max=20 positions the positions panel can get tall — cap
+           the visible height and let the body scroll inside the panel
+           instead of pushing the journal off-screen. */
+        .table-wrap.positions-scroll {
+            max-height: 420px;
+            overflow-y: auto;
+        }
         table { width: 100%; border-collapse: collapse; }
         th {
             text-align: right;
@@ -855,7 +862,7 @@
                 </div>
                 <span class="badge" id="positionsCount">0</span>
             </div>
-            <div class="table-wrap" id="positionsTable"></div>
+            <div class="table-wrap positions-scroll" id="positionsTable"></div>
         </div>
 
         <!-- Trade Journal -->

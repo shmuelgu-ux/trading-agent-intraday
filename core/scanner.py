@@ -381,7 +381,10 @@ class StockScanner:
             timeframe=TimeFrame(settings.scanner_bar_minutes, TimeFrameUnit.Minute),
             start=datetime.now() - timedelta(days=settings.scanner_lookback_days),
             end=datetime.now(),
-            limit=10000,  # per-symbol ceiling, generous for safety
+            # 2000 bars is plenty of headroom: ~26 bars/day for 15m timeframe
+            # times the 10-day lookback is ~260 bars, so 2000 covers any
+            # reasonable tuning without wasting bandwidth.
+            limit=2000,
         )
         request.feed = DataFeed.IEX
 
@@ -395,6 +398,15 @@ class StockScanner:
         try:
             bars_dict = bars_data.data  # dict[str, list[Bar]]
         except AttributeError:
+            # alpaca-py changed its response shape underneath us. Log loudly
+            # so this doesn't silently turn a whole market scan into "no
+            # signals" — otherwise the scanner looks healthy but returns
+            # nothing.
+            logger.error(
+                f"alpaca-py response shape changed unexpectedly — got "
+                f"{type(bars_data).__name__} without .data attribute. "
+                f"All {len(symbols)} symbols in this batch will be skipped."
+            )
             bars_dict = {}
 
         results: dict[str, AnalysisResult | None] = {}

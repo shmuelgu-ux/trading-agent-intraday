@@ -259,7 +259,10 @@ class DecisionEngine:
             f"(start: {self._scan_start_positions} positions, "
             f"pending: {self._pending_count})"
         )
-        if current_risk >= settings.max_total_risk:
+        # Tiny epsilon so float drift at the exact cap boundary (e.g. 20 x 0.01
+        # coming out to 0.19999999999999998 or 0.20000000000000004 instead of
+        # an exact 0.2) doesn't falsely reject a trade that mathematically fits.
+        if current_risk >= settings.max_total_risk + 1e-9:
             reject_reasons.append(
                 f"סיכון כולל בתיק {current_risk:.2%} הגיע לתקרה של {settings.max_total_risk:.0%}"
             )
