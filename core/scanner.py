@@ -23,6 +23,13 @@ def _is_rate_limit_error(err: Exception) -> bool:
         or "ratelimit" in msg
     )
 
+
+# Max symbols per Alpaca get_stock_bars request. 200 is the documented
+# upper bound; going higher returns a 400. We send batches of this size
+# instead of one call per symbol so a full market scan turns into ~24
+# API calls instead of ~4,700.
+BATCH_SIZE = 200
+
 # ===== REAL INDEX CONSTITUENTS (updated April 2026) =====
 
 # S&P 500 - full list from stockanalysis.com
@@ -218,42 +225,54 @@ class StockScanner:
             rate_limit_hits = 0
             start_time = datetime.now()
 
-            for symbol in symbols:
-                # Retry loop: if Alpaca returns a rate-limit error we back
-                # off for a few seconds and try the same symbol again.
-                # Everything else is a permanent failure for this symbol.
+            # Batched scanning: one Alpaca call per BATCH_SIZE symbols.
+            # At BATCH_SIZE=200 a full 4,700-symbol universe becomes 24
+            # API calls instead of 4,700 — ~20x faster end to end.
+            for i in range(0, len(symbols), BATCH_SIZE):
+                batch = symbols[i:i + BATCH_SIZE]
+
+                # Retry the whole batch on rate-limit errors
                 attempt = 0
+                batch_results: dict[str, AnalysisResult | None] = {}
                 while True:
                     try:
-                        result = self._full_analysis(symbol)
-                        scanned += 1
-                        if result:
-                            results.append(result)
+                        batch_results = self._full_analysis_batch(batch)
                         break
                     except Exception as e:
                         if _is_rate_limit_error(e) and attempt < 3:
                             wait = 5 * (2 ** attempt)  # 5s, 10s, 20s
                             rate_limit_hits += 1
                             logger.warning(
-                                f"Scanner rate limit hit on {symbol} "
-                                f"(attempt {attempt + 1}/3), backing off {wait}s"
+                                f"Scanner batch rate limit hit (symbols {i}-{i+len(batch)}) "
+                                f"attempt {attempt + 1}/3, backing off {wait}s"
                             )
                             time.sleep(wait)
                             attempt += 1
                             continue
-                        errors += 1
-                        if errors <= 3:
-                            logger.debug(f"Error scanning {symbol}: {e}")
+                        # Non-rate-limit failure: log once and skip the whole batch
+                        errors += len(batch)
+                        if errors <= len(batch) * 3:
+                            logger.warning(
+                                f"Scanner batch failed (symbols {i}-{i+len(batch)}): "
+                                f"{type(e).__name__}: {e}"
+                            )
+                        batch_results = {}
                         break
 
-                # Update progress every 100 stocks
-                if scanned % 100 == 0 and scanned > 0:
-                    self.state["progress"] = scanned
-                    elapsed = (datetime.now() - start_time).total_seconds()
-                    logger.info(
-                        f"Scanner progress: {scanned}/{len(symbols)} "
-                        f"({elapsed:.0f}s elapsed, {len(results)} valid so far)"
-                    )
+                # Accumulate results + count
+                scanned += len(batch)
+                for result in batch_results.values():
+                    if result:
+                        results.append(result)
+
+                # Progress log after every batch
+                self.state["progress"] = scanned
+                elapsed = (datetime.now() - start_time).total_seconds()
+                logger.info(
+                    f"Scanner progress: {scanned}/{len(symbols)} "
+                    f"({elapsed:.0f}s elapsed, {len(results)} valid so far, "
+                    f"batch {i // BATCH_SIZE + 1}/{(len(symbols) + BATCH_SIZE - 1) // BATCH_SIZE})"
+                )
 
             # Sort by strength score (best signals first)
             scored = [(r, self._to_signal(r)) for r in results if r.signal != "NONE"]
@@ -342,6 +361,87 @@ class StockScanner:
         except Exception as e:
             logger.debug(f"Scanner skip {symbol}: {e}")
             return None
+
+    def _full_analysis_batch(
+        self, symbols: list[str]
+    ) -> dict[str, AnalysisResult | None]:
+        """Run full technical analysis on a BATCH of symbols in a single
+        Alpaca API call. Returns a dict keyed by symbol — values are
+        either a full AnalysisResult or None for symbols that didn't
+        pass the quality filters / had insufficient data / errored.
+
+        Raises on transport-level or rate-limit errors so the caller
+        can retry the whole batch.
+        """
+        if not self.alpaca._data_client or not symbols:
+            return {s: None for s in symbols}
+
+        request = StockBarsRequest(
+            symbol_or_symbols=list(symbols),
+            timeframe=TimeFrame(settings.scanner_bar_minutes, TimeFrameUnit.Minute),
+            start=datetime.now() - timedelta(days=settings.scanner_lookback_days),
+            end=datetime.now(),
+            limit=10000,  # per-symbol ceiling, generous for safety
+        )
+        request.feed = DataFeed.IEX
+
+        # NOTE: any exception here propagates up — scan() handles
+        # rate-limit retry at the batch level.
+        bars_data = self.alpaca._data_client.get_stock_bars(request)
+
+        # The alpaca-py BarSet supports both `.data[symbol]` (dict) and
+        # `bars_data[symbol]` (via __getitem__). Some symbols in the
+        # requested batch may be missing entirely if Alpaca had no bars.
+        try:
+            bars_dict = bars_data.data  # dict[str, list[Bar]]
+        except AttributeError:
+            bars_dict = {}
+
+        results: dict[str, AnalysisResult | None] = {}
+        bars_per_day = max(1, (6 * 60 + 30) // settings.scanner_bar_minutes)
+
+        for symbol in symbols:
+            raw_bars = bars_dict.get(symbol) or []
+            try:
+                # Need enough bars for EMA(50) + context
+                if len(raw_bars) < 60:
+                    results[symbol] = None
+                    continue
+
+                current_price = float(raw_bars[-1].close)
+                if current_price < 5.0:  # No penny stocks
+                    results[symbol] = None
+                    continue
+
+                # Volume check — last full trading day worth of bars
+                recent = (
+                    raw_bars[-bars_per_day:]
+                    if len(raw_bars) >= bars_per_day
+                    else raw_bars
+                )
+                day_volume = sum(float(b.volume) for b in recent)
+                if day_volume < 500_000:
+                    results[symbol] = None
+                    continue
+
+                from core.technical_analysis import Bar
+                bars = [
+                    Bar(
+                        open=float(b.open),
+                        high=float(b.high),
+                        low=float(b.low),
+                        close=float(b.close),
+                        volume=float(b.volume),
+                    )
+                    for b in raw_bars
+                ]
+                results[symbol] = analyze(symbol, bars)
+            except Exception as e:
+                # Per-symbol analysis failure — don't fail the whole batch
+                logger.debug(f"Batch skip {symbol}: {e}")
+                results[symbol] = None
+
+        return results
 
     def _to_signal(self, result: AnalysisResult) -> TradingViewSignal:
         """Convert analysis result to a trading signal."""
