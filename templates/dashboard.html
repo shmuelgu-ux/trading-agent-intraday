@@ -1522,7 +1522,10 @@
         let scannerTimeout = null;
         function fmtRelTime(iso) {
             if (!iso) return null;
-            const then = new Date(iso).getTime();
+            // Server stores timestamps as naive UTC — append 'Z' so
+            // the browser knows it's UTC, not local time.
+            const utcIso = iso.endsWith('Z') ? iso : iso + 'Z';
+            const then = new Date(utcIso).getTime();
             if (isNaN(then)) return null;
             const diff = Date.now() - then;
             if (diff < 0) return 'עכשיו';
