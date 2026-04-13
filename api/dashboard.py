@@ -131,6 +131,17 @@ async def get_stats():
     return {"stats": stats}
 
 
+@router.get("/learning")
+async def get_learning_report():
+    """Latest learning report from the self-improvement cycle."""
+    from services.learning_service import LearningService
+    svc = LearningService()
+    report = await svc.get_latest_report()
+    if not report:
+        return {"report": None, "message": "עדיין אין מספיק עסקאות סגורות (צריך לפחות 10)"}
+    return {"report": report}
+
+
 @router.get("/chart/{symbol}")
 async def get_chart_data(symbol: str, interval: str = "1d", range_days: int = 365):
     """Return OHLCV bar data for the lightweight-charts widget.

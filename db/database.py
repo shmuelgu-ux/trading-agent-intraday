@@ -67,6 +67,26 @@ class TradeLog(Base):
     )
 
 
+class LearningReport(Base):
+    """Stores the output of each learning cycle (every 10 closed trades)."""
+    __tablename__ = "learning_report"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Which closed trades were analyzed (comma-separated IDs)
+    trade_ids: Mapped[str] = mapped_column(Text, nullable=False)
+    # Number of trades in this batch
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Per-trade analysis (JSON array of objects)
+    individual_analysis: Mapped[str] = mapped_column(Text, default="[]")
+    # Combined insights (JSON object with patterns, recommendations)
+    combined_insights: Mapped[str] = mapped_column(Text, default="{}")
+    # When this report was generated
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now)
+    # Stats snapshot at time of report
+    win_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 # SQL statements used to create the indexes on an already-existing table.
 # SQLAlchemy's create_all only creates indexes alongside a fresh CREATE TABLE;
 # for a table that already exists on Railway's PostgreSQL we need to add the

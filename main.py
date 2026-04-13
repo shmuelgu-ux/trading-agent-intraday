@@ -14,6 +14,7 @@ from core.scanner import StockScanner
 from services.alpaca_client import AlpacaClient
 from services.journal_service import JournalService
 from services.reconciliation_service import ReconciliationService
+from services.learning_service import LearningService
 from api import dashboard
 
 # Configure logging
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
         alpaca, journal,
         on_loss_callback=engine.mark_ticker_lost,
     )
+
+    # Learning service — analyzes every 10 closed trades
+    learner = LearningService()
 
     # Create scanner early so we can pass to dashboard
     scanner = StockScanner(alpaca)
@@ -261,6 +265,13 @@ async def lifespan(app: FastAPI):
                             reconciled = await reconciler.reconcile_closed_trades()
                             if reconciled:
                                 logger.info(f"Reconciled {reconciled} closed trade(s)")
+                                # Check if we hit 10 closed trades for a learning cycle
+                                try:
+                                    report = await learner.check_and_learn()
+                                    if report:
+                                        logger.info(f"Learning cycle completed: report #{report['id']}")
+                                except Exception as le:
+                                    logger.debug(f"Learning check failed (non-fatal): {le}")
                         except Exception as e:
                             logger.error(f"Reconcile failed: {e}")
 

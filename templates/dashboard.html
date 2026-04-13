@@ -875,6 +875,24 @@
                         <div class="stat-value" id="closed">0</div>
                     </div>
                 </div>
+                <div style="padding:12px 20px;border-top:1px solid var(--border);">
+                    <button class="page-btn" onclick="openLearningReport()" style="width:100%;">דוח למידה</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Learning Report Modal -->
+        <div class="chart-modal" id="learningModal" role="dialog" aria-modal="true">
+            <div class="chart-modal-content" style="max-width:900px;overflow-y:auto;">
+                <div class="chart-modal-header">
+                    <div class="chart-modal-title">
+                        <span class="chart-symbol">דוח למידה</span>
+                    </div>
+                    <button class="chart-close-btn" onclick="closeLearningModal()">×</button>
+                </div>
+                <div id="learningContent" style="padding:24px;">
+                    <div class="chart-loading">טוען דוח...</div>
+                </div>
             </div>
         </div>
 
@@ -1685,6 +1703,100 @@
         })();
 
         // Click "closed trades" stat → filter journal to show only CLOSED
+        // === Learning Report Modal ===
+        async function openLearningReport() {
+            const modal = document.getElementById('learningModal');
+            const content = document.getElementById('learningContent');
+            modal.classList.add('open');
+            document.body.style.overflow = 'hidden';
+            content.innerHTML = '<div class="chart-loading">טוען דוח למידה...</div>';
+
+            const d = await fetchJSON('/api/learning');
+            if (!d || !d.report) {
+                content.innerHTML = '<div class="empty" style="padding:40px;text-align:center;"><div class="empty-icon">~</div>' +
+                    (d && d.message ? d.message : 'אין דוח למידה זמין') + '</div>';
+                return;
+            }
+
+            const r = d.report;
+            const c = r.combined || {};
+            let h = '';
+
+            // Summary
+            h += '<div style="background:var(--accent-glow);padding:16px 20px;border-radius:12px;margin-bottom:20px;">';
+            h += '<div style="font-size:16px;font-weight:700;color:var(--accent);margin-bottom:8px;">סיכום</div>';
+            h += '<div style="font-size:14px;color:var(--text-primary);">' + (c.summary || '') + '</div>';
+            h += '<div style="margin-top:8px;font-size:13px;color:var(--text-secondary);">';
+            h += 'רווחים: ' + (c.wins || 0) + ' | הפסדים: ' + (c.losses || 0);
+            h += ' | רווח ממוצע: $' + (c.avg_win || 0).toFixed(2);
+            h += ' | הפסד ממוצע: $' + (c.avg_loss || 0).toFixed(2);
+            h += '</div></div>';
+
+            // Strengths
+            if (c.strengths && c.strengths.length > 0) {
+                h += '<div style="margin-bottom:16px;">';
+                h += '<div style="font-size:14px;font-weight:700;color:var(--green);margin-bottom:8px;">הצלחות</div>';
+                for (const s of c.strengths) {
+                    h += '<div style="padding:8px 12px;background:var(--green-bg);border-radius:8px;margin-bottom:6px;font-size:13px;border-right:3px solid var(--green);">' + s + '</div>';
+                }
+                h += '</div>';
+            }
+
+            // Patterns + Recommendations
+            if (c.patterns && c.patterns.length > 0) {
+                h += '<div style="margin-bottom:16px;">';
+                h += '<div style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:8px;">דפוסים שזוהו</div>';
+                for (const p of c.patterns) {
+                    h += '<div style="padding:8px 12px;background:var(--red-bg);border-radius:8px;margin-bottom:6px;font-size:13px;border-right:3px solid var(--red);">' + p.detail + '</div>';
+                }
+                h += '</div>';
+            }
+
+            if (c.recommendations && c.recommendations.length > 0) {
+                h += '<div style="margin-bottom:16px;">';
+                h += '<div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:8px;">המלצות</div>';
+                for (const rec of c.recommendations) {
+                    h += '<div style="padding:8px 12px;background:var(--accent-glow);border-radius:8px;margin-bottom:6px;font-size:13px;border-right:3px solid var(--accent);">' + rec + '</div>';
+                }
+                h += '</div>';
+            }
+
+            // Individual trades
+            if (r.individual && r.individual.length > 0) {
+                h += '<div style="margin-top:20px;">';
+                h += '<div style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:10px;">ניתוח פרטני (' + r.individual.length + ' עסקאות)</div>';
+                for (const t of r.individual) {
+                    const color = t.result === 'win' ? 'var(--green)' : 'var(--red)';
+                    const bg = t.result === 'win' ? 'var(--green-bg)' : 'var(--red-bg)';
+                    h += '<div style="padding:10px 14px;background:' + bg + ';border-radius:8px;margin-bottom:6px;border-right:3px solid ' + color + ';">';
+                    h += '<div style="font-size:13px;font-weight:600;color:' + color + ';">' + t.ticker + ' — ' + (t.result === 'win' ? 'רווח' : 'הפסד') + ' $' + Math.abs(t.pnl).toFixed(2) + '</div>';
+                    h += '<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">' + t.explanation + '</div>';
+                    h += '</div>';
+                }
+                h += '</div>';
+            }
+
+            // Timestamp
+            if (r.timestamp) {
+                h += '<div style="margin-top:16px;font-size:11px;color:var(--text-muted);text-align:center;">דוח נוצר: ' + new Date(r.timestamp + 'Z').toLocaleString('he-IL') + '</div>';
+            }
+
+            content.innerHTML = h;
+        }
+
+        function closeLearningModal() {
+            document.getElementById('learningModal').classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        // Close learning modal with Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const lm = document.getElementById('learningModal');
+                if (lm && lm.classList.contains('open')) closeLearningModal();
+            }
+        });
+
         function filterJournalClosed() {
             journalFilters.decision = 'EXECUTE';
             journalFilters.status = 'CLOSED';
