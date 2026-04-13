@@ -1349,7 +1349,7 @@
             if (d.positions && d.positions.length > 0) {
                 // Cache for the chart modal click handler
                 lastPositionRisks = d.positions;
-                let h = '<table><tr><th>סימול</th><th>כיוון</th><th>כמות</th><th>רווח/הפסד</th><th>סיכון</th></tr>';
+                let h = '<table><tr><th>סימול</th><th>כיוון</th><th>כמות</th><th>רווח/הפסד</th><th>סיכון</th><th></th></tr>';
                 d.positions.forEach(p => {
                     const cls = p.unrealized_pnl >= 0 ? 'pos' : 'neg';
                     const side = p.side === 'long' ? 'קנייה' : 'מכירה';
@@ -1361,6 +1361,7 @@
                         <td>${p.qty}</td>
                         <td class="pnl ${cls}">${money(p.unrealized_pnl)}</td>
                         <td>${pct(p.risk_percent)}</td>
+                        <td><button class="detail-btn" onclick="closePosition('${safeSym}')" title="סגור פוזיציה">סגור</button></td>
                     </tr>`;
                 });
                 h += '</table>';
@@ -1807,6 +1808,21 @@
             }
 
             content.innerHTML = h;
+        }
+
+        async function closePosition(symbol) {
+            if (!confirm('האם לסגור את הפוזיציה ב-' + symbol + '?')) return;
+            try {
+                const resp = await fetch(API + '/api/positions/' + symbol, { method: 'DELETE' });
+                const d = await resp.json();
+                if (d.status === 'closed') {
+                    refreshAll();
+                } else {
+                    alert('שגיאה: ' + (d.message || 'לא ניתן לסגור'));
+                }
+            } catch (e) {
+                alert('שגיאה בסגירת הפוזיציה');
+            }
         }
 
         function closeLearningModal() {

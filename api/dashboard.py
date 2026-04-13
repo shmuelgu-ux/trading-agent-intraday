@@ -75,6 +75,19 @@ async def get_positions():
     return {"positions": alpaca.get_open_positions()}
 
 
+@router.delete("/positions/{symbol}")
+async def close_position(symbol: str):
+    """Close a single position immediately at market."""
+    if not alpaca or not alpaca._client:
+        return {"status": "error", "message": "Alpaca not connected"}
+    import asyncio
+    try:
+        await asyncio.to_thread(alpaca._client.close_position, symbol.upper())
+        return {"status": "closed", "symbol": symbol.upper()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @router.get("/journal")
 async def get_journal(
     page: int = 1,
