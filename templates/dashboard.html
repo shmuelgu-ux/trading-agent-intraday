@@ -1151,21 +1151,28 @@
                 // Default to daily with up to 5 years
                 await setChartTimeframe('15m');
 
-                // Scroll wheel on price axis = vertical zoom
-                let priceZoom = 0.1; // scaleMargins (0 = fully zoomed in, 0.45 = max zoom out)
+                // Scroll wheel on price axis = vertical pan (shift chart up/down)
+                let priceOffset = 0;
                 container.addEventListener('wheel', (e) => {
-                    // Only handle when mouse is on the right ~70px (price axis area)
                     const rect = container.getBoundingClientRect();
                     const mouseX = e.clientX - rect.left;
-                    const priceAxisStart = rect.width - 70;
-                    if (mouseX < priceAxisStart) return; // Let chart handle time zoom normally
+                    if (mouseX < rect.width - 70) return;
 
                     e.preventDefault();
-                    const delta = e.deltaY > 0 ? 0.02 : -0.02; // scroll down = zoom out, up = zoom in
-                    priceZoom = Math.max(0.01, Math.min(0.45, priceZoom + delta));
+                    // Scroll up = shift chart up (see lower prices), down = shift down
+                    const step = e.deltaY > 0 ? 0.03 : -0.03;
+                    priceOffset += step;
+                    // Clamp so we don't lose the chart entirely
+                    priceOffset = Math.max(-0.4, Math.min(0.4, priceOffset));
+
+                    const topMargin = 0.1 + priceOffset;
+                    const bottomMargin = 0.1 - priceOffset;
                     lwChart.priceScale('right').applyOptions({
                         autoScale: false,
-                        scaleMargins: { top: priceZoom, bottom: priceZoom },
+                        scaleMargins: {
+                            top: Math.max(0.01, Math.min(0.8, topMargin)),
+                            bottom: Math.max(0.01, Math.min(0.8, bottomMargin)),
+                        },
                     });
                 }, { passive: false });
 
