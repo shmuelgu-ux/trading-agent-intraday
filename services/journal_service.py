@@ -236,6 +236,7 @@ class JournalService:
         ticker: str | None = None,
         decision: str | None = None,
         since: datetime | None = None,
+        status: str | None = None,
     ) -> dict:
         """Get paginated trades with optional filters.
 
@@ -245,6 +246,7 @@ class JournalService:
             ticker: case-insensitive substring match on ticker (e.g. "TSL")
             decision: exact action_taken match ("EXECUTE" or "REJECT")
             since: only rows with timestamp >= this datetime
+            status: exact status match ("OPEN", "CLOSED", "REJECTED")
         """
         async with async_session() as session:
             filters = []
@@ -254,6 +256,8 @@ class JournalService:
                 filters.append(TradeLog.action_taken == decision)
             if since is not None:
                 filters.append(TradeLog.timestamp >= since)
+            if status:
+                filters.append(TradeLog.status == status)
 
             count_stmt = select(func.count()).select_from(TradeLog)
             if filters:

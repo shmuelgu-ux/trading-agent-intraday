@@ -539,6 +539,31 @@
         .chart-level.entry .chart-level-value { color: var(--accent); }
         .chart-level.stop .chart-level-value { color: var(--red); }
         .chart-level.take .chart-level-value { color: var(--green); }
+        .chart-tf-bar {
+            display: flex;
+            gap: 6px;
+            padding: 10px 24px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0,0,0,.015);
+            flex-shrink: 0;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .chart-tf-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.15s;
+        }
+        .chart-tf-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .chart-tf-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+        .chart-tf-info { margin-right: auto; font-size: 11px; color: var(--text-muted); }
         .chart-widget-container {
             flex: 1;
             padding: 12px;
@@ -845,7 +870,7 @@
                         <div class="stat-label">עסקאות שנדחו</div>
                         <div class="stat-value" style="color:var(--red)" id="rejected">0</div>
                     </div>
-                    <div class="stat-item">
+                    <div class="stat-item" style="cursor:pointer" onclick="filterJournalClosed()" title="לחץ לצפייה בעסקאות שנסגרו">
                         <div class="stat-label">עסקאות שנסגרו</div>
                         <div class="stat-value" id="closed">0</div>
                     </div>
@@ -930,12 +955,21 @@
                     <span class="chart-level-value" id="chartRR">--</span>
                 </div>
             </div>
+            <div class="chart-tf-bar" id="chartTfBar">
+                <button class="chart-tf-btn" data-tf="5m">5 דקות</button>
+                <button class="chart-tf-btn" data-tf="15m">15 דקות</button>
+                <button class="chart-tf-btn" data-tf="1h">שעה</button>
+                <button class="chart-tf-btn active" data-tf="1d">יום</button>
+                <button class="chart-tf-btn" data-tf="1wk">שבוע</button>
+                <span class="chart-tf-info" id="chartBarCount"></span>
+            </div>
             <div class="chart-widget-container" id="chartContainer">
                 <div class="chart-loading">טוען גרף...</div>
             </div>
         </div>
     </div>
 
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
     <script>
         const API = window.location.origin;
         const $ = id => document.getElementById(id);
@@ -943,67 +977,86 @@
         const pct = n => (n * 100).toFixed(2) + '%';
 
         // ====================================================================
-        // TradingView chart modal
+        // Lightweight-charts modal
         //
-        // Click any ticker in the positions table or journal table to open a
-        // live TradingView chart with that trade's entry / SL / TP drawn on
-        // top as horizontal rays. Uses the TradingView Advanced Chart widget
-        // (free, loaded lazily) and a postMessage bridge via the supported
-        // studies_overrides -> Horizontal line drawings. Delayed by ~15m on
-        // US equities — that's a TradingView limitation, not the app.
+        // Click any ticker to open a chart with real candle data from Alpaca
+        // (via /api/chart) and entry / SL / TP drawn as horizontal price
+        // lines. Timeframe buttons switch between 5m, 15m, 1h, daily, weekly.
+        // Data cached per-symbol+interval for the session so switching
+        // timeframes is instant on second visit.
         // ====================================================================
-        let chartWidgetScriptLoaded = false;
-        let chartWidgetInstance = null;
+        let lwChart = null;
+        let lwCandleSeries = null;
+        let currentChartTrade = null;
+        let lwResizeObserver = null;
+        const chartCache = {};
 
-        function loadTradingViewScript() {
-            return new Promise((resolve, reject) => {
-                if (chartWidgetScriptLoaded && window.TradingView) {
-                    resolve();
-                    return;
-                }
-                const existing = document.getElementById('tradingview-widget-script');
-                if (existing) {
-                    existing.addEventListener('load', () => { chartWidgetScriptLoaded = true; resolve(); });
-                    existing.addEventListener('error', reject);
-                    return;
-                }
-                const s = document.createElement('script');
-                s.id = 'tradingview-widget-script';
-                s.src = 'https://s3.tradingview.com/tv.js';
-                s.async = true;
-                s.onload = () => { chartWidgetScriptLoaded = true; resolve(); };
-                s.onerror = reject;
-                document.head.appendChild(s);
-            });
-        }
-
-        function destroyChartWidget() {
+        function destroyChart() {
+            if (lwResizeObserver) { lwResizeObserver.disconnect(); lwResizeObserver = null; }
+            if (lwChart) { lwChart.remove(); lwChart = null; }
+            lwCandleSeries = null;
             const container = $('chartContainer');
-            if (container) {
-                container.innerHTML = '<div class="chart-loading">טוען גרף...</div>';
-            }
-            chartWidgetInstance = null;
+            if (container) container.innerHTML = '<div class="chart-loading">טוען גרף...</div>';
         }
 
-        function openChartModal(trade) {
+        async function loadChartBars(symbol, interval) {
+            const key = symbol + ':' + interval;
+            if (chartCache[key]) return chartCache[key];
+            const rangeDays = { '5m': 60, '15m': 60, '1h': 730, '1d': 1825, '1wk': 1825 };
+            const d = await fetchJSON('/api/chart/' + symbol + '?interval=' + interval + '&range_days=' + (rangeDays[interval] || 1825));
+            const bars = (d && d.bars) || [];
+            if (bars.length > 0) chartCache[key] = bars;
+            return bars;
+        }
+
+        function drawPriceLines(series, trade) {
+            if (trade.entry_price) {
+                series.createPriceLine({
+                    price: Number(trade.entry_price), color: '#6366f1',
+                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid,
+                    axisLabelVisible: true, title: 'כניסה',
+                });
+            }
+            if (trade.stop_loss) {
+                series.createPriceLine({
+                    price: Number(trade.stop_loss), color: '#dc2626',
+                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true, title: 'סטופ',
+                });
+            }
+            if (trade.take_profit) {
+                series.createPriceLine({
+                    price: Number(trade.take_profit), color: '#059669',
+                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true, title: 'טייק',
+                });
+            }
+        }
+
+        async function setChartTimeframe(interval) {
+            if (!currentChartTrade || !lwChart) return;
+            const bars = await loadChartBars(currentChartTrade.ticker, interval);
+            lwCandleSeries.setData(bars);
+            const intraday = interval === '5m' || interval === '15m' || interval === '1h';
+            lwChart.applyOptions({ timeScale: { timeVisible: intraday, secondsVisible: false } });
+            lwChart.timeScale().fitContent();
+            const tfBar = $('chartTfBar');
+            if (tfBar) tfBar.querySelectorAll('.chart-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === interval));
+            const countEl = $('chartBarCount');
+            if (countEl) countEl.textContent = bars.length > 0 ? 'נרות: ' + bars.length.toLocaleString() : '';
+        }
+
+        async function openChartModal(trade) {
             if (!trade || !trade.ticker) return;
 
             // Populate header + levels
             $('chartSymbol').textContent = trade.ticker;
-
             const sideTag = $('chartSideTag');
             const isBuy = (trade.side === 'buy' || trade.side === 'long');
             const isSell = (trade.side === 'sell' || trade.side === 'short');
-            if (isBuy) {
-                sideTag.className = 'chart-side-tag tag-buy';
-                sideTag.textContent = 'קנייה';
-            } else if (isSell) {
-                sideTag.className = 'chart-side-tag tag-sell';
-                sideTag.textContent = 'מכירה';
-            } else {
-                sideTag.className = 'chart-side-tag';
-                sideTag.textContent = trade.side || '';
-            }
+            if (isBuy) { sideTag.className = 'chart-side-tag tag-buy'; sideTag.textContent = 'קנייה'; }
+            else if (isSell) { sideTag.className = 'chart-side-tag tag-sell'; sideTag.textContent = 'מכירה'; }
+            else { sideTag.className = 'chart-side-tag'; sideTag.textContent = trade.side || ''; }
 
             $('chartEntry').textContent = trade.entry_price ? money(trade.entry_price) : '--';
             $('chartStop').textContent = trade.stop_loss ? money(trade.stop_loss) : '--';
@@ -1016,89 +1069,57 @@
                 $('chartRR').textContent = '--';
             }
 
-            // Reset container and show modal
-            destroyChartWidget();
+            currentChartTrade = trade;
+            destroyChart();
             $('chartModal').classList.add('open');
             document.body.style.overflow = 'hidden';
 
-            // Load the TradingView script then mount the widget
-            loadTradingViewScript().then(() => {
+            try {
                 const container = $('chartContainer');
-                container.innerHTML = '<div id="tvChartMount" style="width:100%;height:100%;"></div>';
+                container.innerHTML = '';
 
-                // Build the list of horizontal price line drawings that will
-                // be sent to the widget once it's ready.
-                // eslint-disable-next-line no-undef
-                chartWidgetInstance = new TradingView.widget({
-                    autosize: true,
-                    symbol: trade.ticker,
-                    interval: 'D',
-                    timezone: 'America/New_York',
-                    theme: 'light',
-                    style: '1',
-                    locale: 'en',
-                    toolbar_bg: '#f5f7fa',
-                    enable_publishing: false,
-                    hide_side_toolbar: false,
-                    allow_symbol_change: true,
-                    save_image: false,
-                    container_id: 'tvChartMount',
-                    studies: [],
+                lwChart = LightweightCharts.createChart(container, {
+                    layout: { background: { color: '#ffffff' }, textColor: '#1e293b', fontFamily: 'Inter, -apple-system, sans-serif', fontSize: 12 },
+                    grid: { vertLines: { color: '#e2e8f0' }, horzLines: { color: '#e2e8f0' } },
+                    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                    rightPriceScale: { borderColor: '#cbd5e1' },
+                    timeScale: { borderColor: '#cbd5e1', timeVisible: false, secondsVisible: false },
                 });
 
-                // Once the chart is ready, draw entry / SL / TP as horizontal
-                // rays via the supported createShape API.
-                if (chartWidgetInstance && typeof chartWidgetInstance.onChartReady === 'function') {
-                    chartWidgetInstance.onChartReady(() => {
-                        try {
-                            const chart = chartWidgetInstance.activeChart
-                                ? chartWidgetInstance.activeChart()
-                                : null;
-                            if (!chart || typeof chart.createShape !== 'function') return;
-                            const drawLine = (price, color, text) => {
-                                if (!price || isNaN(price)) return;
-                                chart.createShape(
-                                    { price: Number(price) },
-                                    {
-                                        shape: 'horizontal_line',
-                                        lock: true,
-                                        disableSelection: true,
-                                        disableSave: true,
-                                        disableUndo: true,
-                                        text: text,
-                                        overrides: {
-                                            linecolor: color,
-                                            linewidth: 2,
-                                            linestyle: 0,
-                                            showLabel: true,
-                                            textcolor: color,
-                                            horzLabelsAlign: 'right',
-                                            vertLabelsAlign: 'middle',
-                                            showPrice: true,
-                                        },
-                                    }
-                                );
-                            };
-                            drawLine(trade.entry_price, '#6366f1', 'Entry');
-                            drawLine(trade.stop_loss, '#dc2626', 'Stop Loss');
-                            drawLine(trade.take_profit, '#059669', 'Take Profit');
-                        } catch (err) {
-                            console.warn('Failed to draw trade levels on chart:', err);
-                        }
-                    });
-                }
-            }).catch((err) => {
-                console.error('TradingView script failed to load:', err);
-                $('chartContainer').innerHTML =
-                    '<div class="chart-loading">לא ניתן לטעון את הגרף. בדוק חיבור לאינטרנט.</div>';
-            });
+                lwCandleSeries = lwChart.addCandlestickSeries({
+                    upColor: '#059669', downColor: '#dc2626',
+                    borderUpColor: '#059669', borderDownColor: '#dc2626',
+                    wickUpColor: '#059669', wickDownColor: '#dc2626',
+                });
+
+                drawPriceLines(lwCandleSeries, trade);
+
+                // Wire timeframe buttons
+                $('chartTfBar').querySelectorAll('.chart-tf-btn').forEach(btn => {
+                    btn.onclick = () => setChartTimeframe(btn.dataset.tf);
+                });
+
+                // Default to daily with up to 5 years
+                await setChartTimeframe('1d');
+
+                // Resize handling
+                lwResizeObserver = new ResizeObserver(entries => {
+                    if (!entries[0] || !lwChart) return;
+                    const { width, height } = entries[0].contentRect;
+                    lwChart.applyOptions({ width, height });
+                });
+                lwResizeObserver.observe(container);
+            } catch (err) {
+                console.error('Chart failed:', err);
+                $('chartContainer').innerHTML = '<div class="chart-loading">לא ניתן לטעון את הגרף.</div>';
+            }
         }
 
         function closeChartModal() {
             $('chartModal').classList.remove('open');
             document.body.style.overflow = '';
-            // Give the animation a frame before wiping the widget
-            setTimeout(destroyChartWidget, 150);
+            currentChartTrade = null;
+            setTimeout(destroyChart, 150);
         }
 
         // Close on X button, backdrop click, or Escape key
@@ -1295,18 +1316,19 @@
         }
 
         let currentPage = 1;
-        const journalFilters = { ticker: '', decision: '', since_hours: '' };
+        const journalFilters = { ticker: '', decision: '', since_hours: '', status: '' };
 
         function buildJournalQuery(page) {
             const params = new URLSearchParams({ page: String(page), per_page: '20' });
             if (journalFilters.ticker) params.set('ticker', journalFilters.ticker);
             if (journalFilters.decision) params.set('decision', journalFilters.decision);
             if (journalFilters.since_hours) params.set('since_hours', journalFilters.since_hours);
+            if (journalFilters.status) params.set('status', journalFilters.status);
             return params.toString();
         }
 
         function hasActiveFilter() {
-            return !!(journalFilters.ticker || journalFilters.decision || journalFilters.since_hours);
+            return !!(journalFilters.ticker || journalFilters.decision || journalFilters.since_hours || journalFilters.status);
         }
 
         async function loadJournal(page = currentPage) {
@@ -1627,10 +1649,30 @@
                 journalFilters.ticker = '';
                 journalFilters.since_hours = '';
                 journalFilters.decision = '';
+                journalFilters.status = '';
                 currentPage = 1;
                 loadJournal(1);
             });
         })();
+
+        // Click "closed trades" stat → filter journal to show only CLOSED
+        function filterJournalClosed() {
+            journalFilters.decision = 'EXECUTE';
+            journalFilters.status = 'CLOSED';
+            journalFilters.ticker = '';
+            journalFilters.since_hours = '';
+            // Update the visible dropdowns to match
+            const decSel = document.getElementById('filterDecision');
+            const timeSel = document.getElementById('filterTime');
+            const tickIn = document.getElementById('filterTicker');
+            if (decSel) decSel.value = 'EXECUTE';
+            if (timeSel) timeSel.value = '';
+            if (tickIn) tickIn.value = '';
+            currentPage = 1;
+            loadJournal(1);
+            // Scroll down to journal
+            document.getElementById('journalTable').scrollIntoView({ behavior: 'smooth' });
+        }
 
         refreshAll();
         updateMarketTimer();

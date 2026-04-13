@@ -82,6 +82,7 @@ async def get_journal(
     ticker: str | None = None,
     decision: str | None = None,
     since_hours: int | None = None,
+    status: str | None = None,
 ):
     """Paginated trade journal entries.
 
@@ -89,6 +90,7 @@ async def get_journal(
         ticker: case-insensitive substring match (e.g. "TSL" matches "TSLA")
         decision: "EXECUTE" or "REJECT"
         since_hours: only rows from the last N hours
+        status: "OPEN", "CLOSED", or "REJECTED"
     """
     if not journal:
         return {"trades": [], "page": 1, "total_pages": 0, "total": 0}
@@ -97,7 +99,6 @@ async def get_journal(
     if since_hours is not None and since_hours > 0:
         from datetime import timedelta
         from db.database import _utc_naive_now
-        # Compare against the tz-naive UTC timestamps stored in trade_log
         since = _utc_naive_now() - timedelta(hours=since_hours)
 
     # Normalize decision to expected values
@@ -105,12 +106,18 @@ async def get_journal(
     if decision_norm and decision_norm not in ("EXECUTE", "REJECT"):
         decision_norm = None
 
+    # Normalize status
+    status_norm = status.upper() if status else None
+    if status_norm and status_norm not in ("OPEN", "CLOSED", "REJECTED"):
+        status_norm = None
+
     result = await journal.get_paginated_trades(
         page=page,
         per_page=per_page,
         ticker=ticker,
         decision=decision_norm,
         since=since,
+        status=status_norm,
     )
     return result
 
@@ -122,6 +129,71 @@ async def get_stats():
         return {"stats": {}}
     stats = await journal.get_stats()
     return {"stats": stats}
+
+
+@router.get("/chart/{symbol}")
+async def get_chart_data(symbol: str, interval: str = "1d", range_days: int = 365):
+    """Return OHLCV bar data for the lightweight-charts widget.
+
+    Args:
+        symbol: ticker symbol (e.g. AAPL)
+        interval: bar size — "5m", "15m", "1h", "1d", "1wk"
+        range_days: how far back to fetch (max 1825 = 5 years for daily)
+    """
+    if not alpaca or not alpaca._data_client:
+        return {"bars": []}
+
+    import asyncio
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
+    from datetime import datetime, timedelta
+
+    # Map interval string to TimeFrame
+    tf_map = {
+        "5m":  TimeFrame(5, TimeFrameUnit.Minute),
+        "15m": TimeFrame(15, TimeFrameUnit.Minute),
+        "30m": TimeFrame(30, TimeFrameUnit.Minute),
+        "1h":  TimeFrame(1, TimeFrameUnit.Hour),
+        "1d":  TimeFrame.Day,
+        "1wk": TimeFrame.Week,
+    }
+    timeframe = tf_map.get(interval, TimeFrame.Day)
+
+    # Cap range to 5 years for daily, 60 days for intraday
+    if interval in ("5m", "15m", "30m"):
+        range_days = min(range_days, 60)
+    elif interval == "1h":
+        range_days = min(range_days, 730)
+    else:
+        range_days = min(range_days, 1825)
+
+    try:
+        request = StockBarsRequest(
+            symbol_or_symbols=symbol.upper(),
+            timeframe=timeframe,
+            start=datetime.now() - timedelta(days=range_days),
+            end=datetime.now(),
+            limit=5000,
+        )
+        request.feed = DataFeed.IEX
+        bars_data = await asyncio.to_thread(
+            alpaca._data_client.get_stock_bars, request
+        )
+        raw_bars = bars_data.data.get(symbol.upper(), [])
+        bars = [
+            {
+                "time": int(b.timestamp.timestamp()),
+                "open": round(float(b.open), 2),
+                "high": round(float(b.high), 2),
+                "low": round(float(b.low), 2),
+                "close": round(float(b.close), 2),
+            }
+            for b in raw_bars
+        ]
+        return {"bars": bars, "symbol": symbol.upper(), "interval": interval}
+    except Exception as e:
+        return {"bars": [], "error": str(e)}
 
 
 @router.get("/risk")
