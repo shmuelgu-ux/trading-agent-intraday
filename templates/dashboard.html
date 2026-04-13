@@ -1205,15 +1205,19 @@
             if (!d) return;
             const liveEquity = d.account.live_equity || d.account.trading_capital || d.account.equity;
             const pnl = d.account.unrealized_pnl || 0;
+            const realizedPnl = d.account.realized_pnl || 0;
+            const totalPnl = pnl + realizedPnl;
             const pnlPct = d.account.pnl_percent || 0;
             const cap = d.account.trading_capital || d.account.equity;
 
+            // Equity color: green only when ABOVE starting capital,
+            // red when below (includes both realized + unrealized P&L)
             $('equity').textContent = money(liveEquity);
-            $('equity').className = 'kpi-value' + (pnl >= 0 ? ' positive' : ' negative');
+            $('equity').className = 'kpi-value' + (liveEquity >= cap ? ' positive' : ' negative');
             $('equitySub').textContent = 'הון התחלתי: ' + money(cap);
 
-            $('livePnl').textContent = (pnl >= 0 ? '+' : '') + money(pnl);
-            $('livePnl').className = 'kpi-value' + (pnl >= 0 ? ' positive' : ' negative');
+            $('livePnl').textContent = (totalPnl >= 0 ? '+' : '') + money(totalPnl);
+            $('livePnl').className = 'kpi-value' + (totalPnl >= 0 ? ' positive' : ' negative');
             $('livePnlPct').textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
 
             $('buyingPower').textContent = money(d.account.buying_power_live || liveEquity * 8);
