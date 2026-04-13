@@ -131,6 +131,17 @@ async def get_stats():
     return {"stats": stats}
 
 
+@router.delete("/admin/reset-journal")
+async def reset_journal():
+    """ONE-TIME endpoint to clear journal. Will be removed after use."""
+    from sqlalchemy import delete
+    from db.database import async_session, TradeLog
+    async with async_session() as session:
+        await session.execute(delete(TradeLog))
+        await session.commit()
+    return {"status": "cleared"}
+
+
 @router.get("/chart/{symbol}")
 async def get_chart_data(symbol: str, interval: str = "1d", range_days: int = 365):
     """Return OHLCV bar data for the lightweight-charts widget.
