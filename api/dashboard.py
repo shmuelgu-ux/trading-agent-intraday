@@ -31,16 +31,28 @@ async def system_status():
     """Overall system status."""
     account = alpaca.get_account() if alpaca else {}
     positions = alpaca.get_open_positions() if alpaca else []
-    # Calculate live P&L and equity
+    # Calculate live P&L and equity.
+    # Must include BOTH unrealized (open positions) AND realized (closed
+    # trades) to show accurate equity. Without the realized component a
+    # closed loss like INTC -$13.77 would vanish from the display.
     total_unrealized_pnl = sum(p.get("unrealized_pnl", 0) for p in positions)
+    realized_pnl = 0.0
+    if journal:
+        try:
+            stats = await journal.get_stats()
+            realized_pnl = stats.get("total_pnl", 0.0)
+        except Exception:
+            realized_pnl = 0.0
     trading_capital = settings.max_capital
-    live_equity = trading_capital + total_unrealized_pnl
+    total_pnl = realized_pnl + total_unrealized_pnl
+    live_equity = trading_capital + total_pnl
     if account:
         account["trading_capital"] = trading_capital
         account["live_equity"] = round(live_equity, 2)
         account["buying_power_live"] = round(live_equity * 8, 2)
         account["unrealized_pnl"] = round(total_unrealized_pnl, 2)
-        account["pnl_percent"] = round((total_unrealized_pnl / trading_capital) * 100, 2) if trading_capital > 0 else 0
+        account["realized_pnl"] = round(realized_pnl, 2)
+        account["pnl_percent"] = round((total_pnl / trading_capital) * 100, 2) if trading_capital > 0 else 0
     return {
         "status": "running",
         "alpaca_connected": alpaca.is_connected if alpaca else False,
