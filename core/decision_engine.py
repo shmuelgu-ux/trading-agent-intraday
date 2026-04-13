@@ -53,6 +53,33 @@ class DecisionEngine:
         self._scan_start_risk = 0.0
         # Tickers that existed BEFORE scan started
         self._scan_start_tickers: set[str] = set()
+        # Tickers that lost money today — blocked from re-entry until
+        # tomorrow. Populated by mark_ticker_lost(), reset by
+        # reset_daily_blacklist(). Prevents the scanner from repeatedly
+        # entering and getting stopped out on the same stock.
+        self._daily_losers: set[str] = set()
+        self._daily_losers_date: str = ""
+
+    def mark_ticker_lost(self, ticker: str):
+        """Called by reconciliation when a trade closes with a loss.
+        Blocks re-entry on the same ticker for the rest of the day."""
+        today = self._now_et().strftime("%Y-%m-%d")
+        if self._daily_losers_date != today:
+            self._daily_losers.clear()
+            self._daily_losers_date = today
+        self._daily_losers.add(ticker)
+        logger.info(f"Blocked {ticker} for rest of day (lost today)")
+
+    def _check_daily_blacklist(self, ticker: str) -> str | None:
+        """Returns a rejection reason if ticker lost today, else None."""
+        today = self._now_et().strftime("%Y-%m-%d")
+        if self._daily_losers_date != today:
+            self._daily_losers.clear()
+            self._daily_losers_date = today
+            return None
+        if ticker in self._daily_losers:
+            return f"המניה {ticker} כבר הפסידה היום — חסום כניסה חוזרת"
+        return None
 
     async def reset_pending(self):
         """Reset pending counters - call at start of each scan cycle.
@@ -251,6 +278,11 @@ class DecisionEngine:
         # 2) Duplicate ticker (existing position OR pending order from this scan)
         if signal.ticker in self._pending_tickers or signal.ticker in self._scan_start_tickers:
             reject_reasons.append(f"כבר יש פוזיציה או פקודה פתוחה ב-{signal.ticker}")
+
+        # 2b) Same-day re-entry after a loss — don't keep hitting the same wall
+        daily_block = self._check_daily_blacklist(signal.ticker)
+        if daily_block:
+            reject_reasons.append(daily_block)
 
         # 3) Total portfolio risk cap
         current_risk = self._scan_start_risk + self._pending_risk

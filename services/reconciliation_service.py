@@ -22,9 +22,13 @@ from services.journal_service import JournalService
 
 
 class ReconciliationService:
-    def __init__(self, alpaca: AlpacaClient, journal: JournalService):
+    def __init__(self, alpaca: AlpacaClient, journal: JournalService,
+                 on_loss_callback=None):
         self.alpaca = alpaca
         self.journal = journal
+        # Optional callback: called with (ticker) when a trade closes
+        # at a loss. Used by DecisionEngine to block same-day re-entry.
+        self.on_loss_callback = on_loss_callback
 
     async def reconcile_closed_trades(self) -> int:
         """Walk every OPEN+EXECUTE journal row whose ticker is no longer
@@ -121,6 +125,12 @@ class ReconciliationService:
                         f"entry={entry_price} exit={exit_price} "
                         f"qty={qty} side={trade.side} pnl={pnl:+.2f}"
                     )
+                    # Notify the engine so it blocks same-day re-entry
+                    if pnl < 0 and self.on_loss_callback:
+                        try:
+                            self.on_loss_callback(ticker)
+                        except Exception:
+                            pass
                 else:
                     logger.info(
                         f"Reconcile {ticker} #{trade.id}: already closed "

@@ -40,7 +40,10 @@ async def lifespan(app: FastAPI):
     engine = DecisionEngine(risk_manager, alpaca, journal)
 
     # Reconciles closed trades back into the journal (keeps the stats panel accurate)
-    reconciler = ReconciliationService(alpaca, journal)
+    reconciler = ReconciliationService(
+        alpaca, journal,
+        on_loss_callback=engine.mark_ticker_lost,
+    )
 
     # Create scanner early so we can pass to dashboard
     scanner = StockScanner(alpaca)

@@ -27,9 +27,10 @@ class Settings(BaseSettings):
     max_open_positions: int = Field(default=20, ge=1, le=30)
     default_rr_ratio: float = Field(default=1.5, ge=1.0, le=5.0)
 
-    # ATR-based Stop Loss multiplier — tighter than swing (1.0 vs 1.5)
-    # because intraday moves are smaller and we need to exit fast.
-    atr_sl_multiplier: float = Field(default=1.0, ge=0.3, le=3.0)
+    # ATR-based Stop Loss multiplier — 1.5x ATR gives the trade room
+    # to breathe past normal intraday noise. At 1.0x, 80% of trades
+    # were getting stopped out by single-candle noise before reaching TP.
+    atr_sl_multiplier: float = Field(default=1.5, ge=0.5, le=3.0)
 
     # Scanner — 15-minute bars, scan every few minutes during market hours
     scanner_enabled: bool = True
