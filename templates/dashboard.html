@@ -1266,9 +1266,11 @@
             $('equity').className = 'kpi-value' + (liveEquity >= cap ? ' positive' : ' negative');
             $('equitySub').textContent = 'הון התחלתי: ' + money(cap);
 
-            $('livePnl').textContent = (totalPnl >= 0 ? '+' : '') + money(totalPnl);
-            $('livePnl').className = 'kpi-value' + (totalPnl >= 0 ? ' positive' : ' negative');
-            $('livePnlPct').textContent = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+            // Live P&L = ONLY open positions (unrealized), not closed
+            const unrealizedPct = cap > 0 ? ((pnl / cap) * 100) : 0;
+            $('livePnl').textContent = (pnl >= 0 ? '+' : '') + money(pnl);
+            $('livePnl').className = 'kpi-value' + (pnl >= 0 ? ' positive' : ' negative');
+            $('livePnlPct').textContent = (unrealizedPct >= 0 ? '+' : '') + unrealizedPct.toFixed(2) + '%';
 
             $('buyingPower').textContent = money(d.account.buying_power_live || liveEquity * 8);
             $('openPositions').textContent = d.open_positions_count;
