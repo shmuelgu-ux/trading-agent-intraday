@@ -1013,23 +1013,52 @@
             if (trade.entry_price) {
                 series.createPriceLine({
                     price: Number(trade.entry_price), color: '#6366f1',
-                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid,
+                    lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Solid,
                     axisLabelVisible: true, title: 'כניסה',
                 });
             }
             if (trade.stop_loss) {
                 series.createPriceLine({
                     price: Number(trade.stop_loss), color: '#dc2626',
-                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+                    lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dashed,
                     axisLabelVisible: true, title: 'סטופ',
                 });
             }
             if (trade.take_profit) {
                 series.createPriceLine({
                     price: Number(trade.take_profit), color: '#059669',
-                    lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+                    lineWidth: 3, lineStyle: LightweightCharts.LineStyle.Dashed,
                     axisLabelVisible: true, title: 'טייק',
                 });
+            }
+        }
+
+        function zoomToTradeLevels(trade) {
+            // Auto-zoom the price axis so entry/SL/TP are always clearly
+            // visible — even on tight-range trades like ABT where the
+            // spread is < 1%. Adds 30% padding above and below the
+            // widest price among entry/SL/TP.
+            if (!lwChart || !trade) return;
+            const prices = [trade.entry_price, trade.stop_loss, trade.take_profit].filter(Boolean).map(Number);
+            if (prices.length < 2) return;
+            const lo = Math.min(...prices);
+            const hi = Math.max(...prices);
+            const spread = hi - lo;
+            const padding = Math.max(spread * 1.5, hi * 0.005); // at least 0.5% of price
+            lwChart.priceScale('right').applyOptions({
+                autoScale: false,
+                scaleMargins: { top: 0.1, bottom: 0.1 },
+            });
+            // Use setVisiblePriceRange if available, otherwise let autoScale handle it
+            try {
+                lwCandleSeries.applyOptions({
+                    autoscaleInfoProvider: () => ({
+                        priceRange: { minValue: lo - padding, maxValue: hi + padding },
+                    }),
+                });
+            } catch (e) {
+                // Fallback: just let autoScale do its thing
+                lwChart.priceScale('right').applyOptions({ autoScale: true });
             }
         }
 
@@ -1040,6 +1069,7 @@
             const intraday = interval === '5m' || interval === '15m' || interval === '1h';
             lwChart.applyOptions({ timeScale: { timeVisible: intraday, secondsVisible: false } });
             lwChart.timeScale().fitContent();
+            zoomToTradeLevels(currentChartTrade);
             const tfBar = $('chartTfBar');
             if (tfBar) tfBar.querySelectorAll('.chart-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === interval));
             const countEl = $('chartBarCount');
