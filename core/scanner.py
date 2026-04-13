@@ -4,7 +4,7 @@ from loguru import logger
 from config import settings
 from models.signals import TradingViewSignal, SignalAction, Indicators
 from services.alpaca_client import AlpacaClient
-from core.technical_analysis import analyze, Bar, AnalysisResult
+from core.technical_analysis import analyze, analyze_macro, Bar, AnalysisResult, MacroContext
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.enums import DataFeed
@@ -392,22 +392,44 @@ class StockScanner:
         # rate-limit retry at the batch level.
         bars_data = self.alpaca._data_client.get_stock_bars(request)
 
-        # The alpaca-py BarSet supports both `.data[symbol]` (dict) and
-        # `bars_data[symbol]` (via __getitem__). Some symbols in the
-        # requested batch may be missing entirely if Alpaca had no bars.
         try:
             bars_dict = bars_data.data  # dict[str, list[Bar]]
         except AttributeError:
-            # alpaca-py changed its response shape underneath us. Log loudly
-            # so this doesn't silently turn a whole market scan into "no
-            # signals" — otherwise the scanner looks healthy but returns
-            # nothing.
             logger.error(
                 f"alpaca-py response shape changed unexpectedly — got "
                 f"{type(bars_data).__name__} without .data attribute. "
                 f"All {len(symbols)} symbols in this batch will be skipped."
             )
             bars_dict = {}
+
+        # --- Macro bars: fetch higher timeframe for dual-TF analysis ---
+        # For intraday (bar_minutes <= 60): macro = daily bars
+        # For daily: macro = weekly bars
+        macro_dict: dict[str, list] = {}
+        if settings.scanner_bar_minutes <= 60:
+            macro_tf = TimeFrame.Day
+            macro_lookback = 90  # ~90 daily bars for EMA(50)
+        else:
+            macro_tf = TimeFrame.Week
+            macro_lookback = 120  # ~120 weekly bars
+
+        try:
+            macro_req = StockBarsRequest(
+                symbol_or_symbols=list(symbols),
+                timeframe=macro_tf,
+                start=datetime.now() - timedelta(days=macro_lookback * (7 if macro_tf == TimeFrame.Week else 1)),
+                end=datetime.now(),
+                limit=2000,
+            )
+            macro_req.feed = DataFeed.IEX
+            macro_data = self.alpaca._data_client.get_stock_bars(macro_req)
+            try:
+                macro_dict = macro_data.data or {}
+            except AttributeError:
+                macro_dict = {}
+        except Exception as e:
+            # Macro fetch failed — continue without it (graceful degradation)
+            logger.warning(f"Macro bar fetch failed (proceeding without): {e}")
 
         results: dict[str, AnalysisResult | None] = {}
         bars_per_day = max(1, (6 * 60 + 30) // settings.scanner_bar_minutes)
@@ -436,7 +458,6 @@ class StockScanner:
                     results[symbol] = None
                     continue
 
-                from core.technical_analysis import Bar
                 bars = [
                     Bar(
                         open=float(b.open),
@@ -447,9 +468,25 @@ class StockScanner:
                     )
                     for b in raw_bars
                 ]
-                results[symbol] = analyze(symbol, bars)
+
+                # Build macro context from higher-TF bars (if available)
+                macro_ctx = None
+                macro_raw = macro_dict.get(symbol) or []
+                if len(macro_raw) >= 50:
+                    macro_bars = [
+                        Bar(
+                            open=float(b.open),
+                            high=float(b.high),
+                            low=float(b.low),
+                            close=float(b.close),
+                            volume=float(b.volume),
+                        )
+                        for b in macro_raw
+                    ]
+                    macro_ctx = analyze_macro(macro_bars)
+
+                results[symbol] = analyze(symbol, bars, macro=macro_ctx)
             except Exception as e:
-                # Per-symbol analysis failure — don't fail the whole batch
                 logger.debug(f"Batch skip {symbol}: {e}")
                 results[symbol] = None
 

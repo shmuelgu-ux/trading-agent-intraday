@@ -25,6 +25,20 @@ class Bar:
 
 
 @dataclass
+class MacroContext:
+    """Higher-timeframe trend context (e.g. daily for intraday, weekly for swing).
+
+    Provides the 'big picture' so the micro analysis can weigh signals
+    more accurately — a micro buy signal that aligns with a macro uptrend
+    is stronger than one that fights a macro downtrend.
+    """
+    ema_trend: str   # "up", "down", "flat"
+    rsi: float
+    macd_signal: str
+    strength: int    # 0-100 — how clear the macro picture is
+
+
+@dataclass
 class AnalysisResult:
     """Full technical analysis output."""
     ticker: str
@@ -185,10 +199,58 @@ def calculate_vwap(bars: list[Bar]) -> float | None:
     return round(vwap, 2)
 
 
-def analyze(ticker: str, bars: list[Bar]) -> AnalysisResult | None:
-    """Full swing trading analysis on a stock.
+def analyze_macro(bars: list[Bar]) -> MacroContext | None:
+    """Analyze the higher timeframe to produce a macro context.
 
-    Scoring system (0-100):
+    Runs EMA, RSI, and MACD on the macro bars (e.g. daily bars for
+    an intraday scanner, or weekly bars for a swing scanner) and
+    returns a simple summary of the big-picture trend.
+    """
+    if len(bars) < 50:
+        return None
+
+    closes = [b.close for b in bars]
+    rsi = calculate_rsi(closes) or 50.0
+    _, _, macd_signal = calculate_macd(closes)
+
+    ema9 = calculate_ema(closes, 9)
+    ema21 = calculate_ema(closes, 21)
+    ema50 = calculate_ema(closes, 50)
+    if not ema9 or not ema21 or not ema50:
+        return None
+
+    if ema9[-1] > ema21[-1] > ema50[-1]:
+        ema_trend = "up"
+    elif ema9[-1] < ema21[-1] < ema50[-1]:
+        ema_trend = "down"
+    else:
+        ema_trend = "flat"
+
+    # Simple strength: how clear is the macro picture?
+    strength = 0
+    if ema_trend != "flat":
+        strength += 40
+    if macd_signal in ("bullish_cross", "bearish_cross"):
+        strength += 30
+    elif macd_signal in ("bullish", "bearish"):
+        strength += 15
+    if rsi < 35 or rsi > 65:
+        strength += 20
+    elif rsi < 45 or rsi > 55:
+        strength += 10
+
+    return MacroContext(
+        ema_trend=ema_trend,
+        rsi=rsi,
+        macd_signal=macd_signal,
+        strength=strength,
+    )
+
+
+def analyze(ticker: str, bars: list[Bar], macro: MacroContext | None = None) -> AnalysisResult | None:
+    """Full technical analysis on a stock.
+
+    Scoring system (0-100 base, then macro adjustment):
     - EMA trend alignment: +20
     - MACD confirmation: +20
     - RSI in favorable zone: +15
@@ -196,6 +258,11 @@ def analyze(ticker: str, bars: list[Bar]) -> AnalysisResult | None:
     - Bollinger Band position: +15
     - Volume confirmation: +10
     - Price above/below VWAP: +10
+
+    When a MacroContext is provided (dual-timeframe analysis):
+    - Macro trend agrees with signal: up to +15 bonus
+    - Macro trend disagrees: up to -15 penalty
+    - Macro flat: no adjustment
     """
     if len(bars) < 50:
         return None
@@ -322,6 +389,43 @@ def analyze(ticker: str, bars: list[Bar]) -> AnalysisResult | None:
         elif price < vwap and ema_trend == "down":
             sell_score += 10
             sell_reasons.append(f"Price below VWAP ({vwap})")
+
+    # === MACRO ADJUSTMENT ===
+    # When a higher-timeframe context is available, adjust scores:
+    # agreement → bonus, disagreement → penalty, flat → neutral.
+    if macro:
+        macro_is_bullish = (macro.ema_trend == "up" or
+                            macro.macd_signal in ("bullish", "bullish_cross"))
+        macro_is_bearish = (macro.ema_trend == "down" or
+                            macro.macd_signal in ("bearish", "bearish_cross"))
+
+        # Scale the adjustment by macro clarity (0-100 → 0-1)
+        weight = min(macro.strength, 100) / 100.0
+
+        if macro_is_bullish:
+            # Macro bullish → boost buy score, penalize sell score
+            buy_bonus = int(15 * weight)
+            sell_penalty = int(15 * weight)
+            buy_score += buy_bonus
+            sell_score -= sell_penalty
+            if buy_bonus > 0:
+                buy_reasons.append(f"מאקרו תומך (טרנד עולה, עוצמה {macro.strength})")
+            if sell_penalty > 0 and sell_score > 0:
+                sell_reasons.append(f"מאקרו נגד (טרנד עולה, -{sell_penalty} נק')")
+        elif macro_is_bearish:
+            # Macro bearish → boost sell score, penalize buy score
+            sell_bonus = int(15 * weight)
+            buy_penalty = int(15 * weight)
+            sell_score += sell_bonus
+            buy_score -= buy_penalty
+            if sell_bonus > 0:
+                sell_reasons.append(f"מאקרו תומך (טרנד יורד, עוצמה {macro.strength})")
+            if buy_penalty > 0 and buy_score > 0:
+                buy_reasons.append(f"מאקרו נגד (טרנד יורד, -{buy_penalty} נק')")
+
+        # Clamp to 0
+        buy_score = max(0, buy_score)
+        sell_score = max(0, sell_score)
 
     # === DECISION ===
     min_score = 45  # Minimum confidence to generate a signal
