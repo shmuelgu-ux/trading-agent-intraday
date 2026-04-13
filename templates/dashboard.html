@@ -791,6 +791,7 @@
                 <div class="kpi-icon">$</div>
                 <div class="kpi-label">הון עצמי (לייב)</div>
                 <div class="kpi-value" id="equity">--</div>
+                <div class="kpi-change" id="equityPct"></div>
                 <div class="kpi-sub" id="equitySub"></div>
             </div>
             <div class="kpi">
@@ -813,11 +814,6 @@
                 <div class="kpi-label">אחוז הצלחה</div>
                 <div class="kpi-value" id="winRate">--</div>
                 <div class="kpi-sub" id="winLoss"></div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-label">רווח/הפסד סגורות</div>
-                <div class="kpi-value" id="totalPnl">--</div>
-                <div class="kpi-sub">עסקאות שנסגרו</div>
             </div>
         </div>
 
@@ -1305,6 +1301,11 @@
             // red when below (includes both realized + unrealized P&L)
             $('equity').textContent = money(liveEquity);
             $('equity').className = 'kpi-value' + (liveEquity >= cap ? ' positive' : ' negative');
+            // Total return % (realized + unrealized vs starting capital)
+            const totalReturnPct = cap > 0 ? (((liveEquity - cap) / cap) * 100) : 0;
+            const eqPctEl = $('equityPct');
+            eqPctEl.textContent = (totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(2) + '%';
+            eqPctEl.className = 'kpi-change ' + (totalReturnPct >= 0 ? 'up' : 'down');
             $('equitySub').textContent = 'הון התחלתי: ' + money(cap);
 
             // Live P&L = ONLY open positions (unrealized), not closed
@@ -1380,8 +1381,6 @@
             $('winRate').textContent = (wr * 100).toFixed(0) + '%';
             $('winRate').className = 'kpi-value' + (wr >= 0.5 ? ' positive' : wr > 0 ? ' negative' : '');
             $('winLoss').textContent = s.wins + ' הצלחות / ' + s.losses + ' הפסדים';
-            $('totalPnl').textContent = money(s.total_pnl);
-            $('totalPnl').className = 'kpi-value' + (s.total_pnl >= 0 ? ' positive' : ' negative');
             $('totalSignals').textContent = s.total_signals;
             $('executed').textContent = s.executed;
             $('rejected').textContent = s.rejected;
