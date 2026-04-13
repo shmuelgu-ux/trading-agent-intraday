@@ -1228,17 +1228,16 @@
             };
             openChartModal(basic);
 
-            // Fetch the real execute row from the journal and refresh the
-            // level cards if we get one. The widget stays mounted — only
-            // the four header cards update.
+            // Fetch the full EXECUTE row and re-open the chart with the
+            // complete data (SL/TP/lines). Bars are cached so the reload
+            // is instant — the user just sees the lines pop in.
             const full = await fetchLatestExecuteForTicker(symbol);
             if (!full) return;
-            // Only refresh if the modal is still showing the same symbol
-            // (user may have closed it or clicked another ticker meanwhile)
             if ($('chartSymbol').textContent !== symbol) return;
-            $('chartEntry').textContent = full.entry_price ? money(full.entry_price) : '--';
-            $('chartStop').textContent = full.stop_loss ? money(full.stop_loss) : '--';
-            $('chartTake').textContent = full.take_profit ? money(full.take_profit) : '--';
+            // Re-open the modal with full data so the chart draws all
+            // three price lines correctly. Without this the chart was
+            // created with null SL/TP and the lines never appeared.
+            openChartModal(full);
             if (full.entry_price && full.stop_loss && full.take_profit) {
                 const risk = Math.abs(full.entry_price - full.stop_loss);
                 const reward = Math.abs(full.take_profit - full.entry_price);
