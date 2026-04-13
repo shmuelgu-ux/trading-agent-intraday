@@ -1151,6 +1151,24 @@
                 // Default to daily with up to 5 years
                 await setChartTimeframe('15m');
 
+                // Scroll wheel on price axis = vertical zoom
+                let priceZoom = 0.1; // scaleMargins (0 = fully zoomed in, 0.45 = max zoom out)
+                container.addEventListener('wheel', (e) => {
+                    // Only handle when mouse is on the right ~70px (price axis area)
+                    const rect = container.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const priceAxisStart = rect.width - 70;
+                    if (mouseX < priceAxisStart) return; // Let chart handle time zoom normally
+
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.02 : -0.02; // scroll down = zoom out, up = zoom in
+                    priceZoom = Math.max(0.01, Math.min(0.45, priceZoom + delta));
+                    lwChart.priceScale('right').applyOptions({
+                        autoScale: false,
+                        scaleMargins: { top: priceZoom, bottom: priceZoom },
+                    });
+                }, { passive: false });
+
                 // Resize handling
                 lwResizeObserver = new ResizeObserver(entries => {
                     if (!entries[0] || !lwChart) return;
