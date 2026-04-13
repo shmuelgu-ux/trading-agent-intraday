@@ -1112,8 +1112,9 @@
                     layout: { background: { color: '#ffffff' }, textColor: '#1e293b', fontFamily: 'Inter, -apple-system, sans-serif', fontSize: 12 },
                     grid: { vertLines: { color: '#e2e8f0' }, horzLines: { color: '#e2e8f0' } },
                     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-                    rightPriceScale: { borderColor: '#cbd5e1' },
+                    rightPriceScale: { borderColor: '#cbd5e1', mode: LightweightCharts.PriceScaleMode.Normal },
                     timeScale: { borderColor: '#cbd5e1', timeVisible: false, secondsVisible: false },
+                    handleScroll: { vertTouchDrag: true },
                 });
 
                 lwCandleSeries = lwChart.addCandlestickSeries({
@@ -1130,7 +1131,7 @@
                 });
 
                 // Default to daily with up to 5 years
-                await setChartTimeframe('1d');
+                await setChartTimeframe('15m');
 
                 // Resize handling
                 lwResizeObserver = new ResizeObserver(entries => {
@@ -1157,11 +1158,8 @@
             const closeBtn = $('chartCloseBtn');
             const modal = $('chartModal');
             if (closeBtn) closeBtn.addEventListener('click', closeChartModal);
-            if (modal) {
-                modal.addEventListener('click', (e) => {
-                    if (e.target === modal) closeChartModal();
-                });
-            }
+            // Removed: clicking backdrop no longer closes the chart.
+            // Only the X button and Escape key close it.
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape' && modal && modal.classList.contains('open')) {
                     closeChartModal();
