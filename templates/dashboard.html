@@ -1200,7 +1200,7 @@
                     const rect = container.getBoundingClientRect();
                     const plotHeight = Math.max(1, rect.height - 30);
                     const rangeSize = priceZoomRange.max - priceZoomRange.min;
-                    const priceDelta = -deltaY * (rangeSize / plotHeight);
+                    const priceDelta = deltaY * (rangeSize / plotHeight);
                     priceZoomRange = {
                         min: priceZoomRange.min + priceDelta,
                         max: priceZoomRange.max + priceDelta,
