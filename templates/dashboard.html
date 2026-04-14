@@ -1503,9 +1503,9 @@
                     <td>${riskText}</td>
                     <td class="pnl neg">${maxLoss}</td>
                     <td class="pnl pos">${maxProfit}</td>
-                    <td><button class="detail-btn" onclick="toggleReason(${i})">למה?</button></td>
+                    <td><button class="detail-btn" onclick="toggleReason(${t.id})">למה?</button></td>
                 </tr>
-                <tr class="reason-row" id="r${i}">
+                <tr class="reason-row" id="r${t.id}">
                     <td colspan="12">
                         <strong style="color:var(--accent);">נימוק ההחלטה:</strong>
                         <ul class="reason-list" style="margin-top:8px;">
@@ -1526,11 +1526,24 @@
             }
 
             $('journalTable').innerHTML = h;
+            // Restore any rows the user had expanded before this refresh.
+            expandedReasons.forEach(id => {
+                const el = document.getElementById('r' + id);
+                if (el) el.classList.add('open');
+            });
         }
 
-        function toggleReason(i) {
-            const el = document.getElementById('r' + i);
-            el.classList.toggle('open');
+        const expandedReasons = new Set();
+        function toggleReason(id) {
+            const el = document.getElementById('r' + id);
+            if (!el) return;
+            if (el.classList.contains('open')) {
+                el.classList.remove('open');
+                expandedReasons.delete(id);
+            } else {
+                el.classList.add('open');
+                expandedReasons.add(id);
+            }
         }
 
         async function refreshAll() {
@@ -1899,7 +1912,7 @@
         refreshAll();
         updateMarketTimer();
         loadScanner();
-        setInterval(refreshAll, 30000);
+        setInterval(refreshAll, 10000);
         setInterval(updateMarketTimer, 60000);
     </script>
 </body>
