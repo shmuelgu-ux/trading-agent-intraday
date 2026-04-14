@@ -1069,15 +1069,17 @@
             if (!lwCandleSeries || !priceZoomRange) return;
             const range = { minValue: priceZoomRange.min, maxValue: priceZoomRange.max };
             try {
+                // autoScale: true forces the provider to be invoked; the provider
+                // then returns our explicit range, giving us full control over
+                // the visible vertical range.
+                lwChart.priceScale('right').applyOptions({
+                    autoScale: true,
+                    scaleMargins: { top: 0.1, bottom: 0.1 },
+                });
                 lwCandleSeries.applyOptions({
                     autoscaleInfoProvider: () => ({ priceRange: range }),
                 });
-                lwChart.priceScale('right').applyOptions({
-                    autoScale: false,
-                    scaleMargins: { top: 0.1, bottom: 0.1 },
-                });
             } catch (e) {
-                // Fallback: just let autoScale do its thing
                 lwChart.priceScale('right').applyOptions({ autoScale: true });
             }
         }
