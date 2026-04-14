@@ -1003,6 +1003,7 @@
         let lwCandleSeries = null;
         let currentChartTrade = null;
         let lwResizeObserver = null;
+        let priceZoom = 1.0;  // 1.0 = default range; <1 zooms in vertically; >1 zooms out
         const chartCache = {};
 
         function destroyChart() {
@@ -1059,6 +1060,10 @@
             const hi = Math.max(...prices);
             const spread = hi - lo;
             const padding = Math.max(spread * 1.5, hi * 0.005); // at least 0.5% of price
+            const baseMin = lo - padding;
+            const baseMax = hi + padding;
+            const center = (baseMin + baseMax) / 2;
+            const halfRange = ((baseMax - baseMin) / 2) * priceZoom;
             lwChart.priceScale('right').applyOptions({
                 autoScale: false,
                 scaleMargins: { top: 0.1, bottom: 0.1 },
@@ -1067,7 +1072,7 @@
             try {
                 lwCandleSeries.applyOptions({
                     autoscaleInfoProvider: () => ({
-                        priceRange: { minValue: lo - padding, maxValue: hi + padding },
+                        priceRange: { minValue: center - halfRange, maxValue: center + halfRange },
                     }),
                 });
             } catch (e) {
@@ -1144,32 +1149,20 @@
                     btn.onclick = () => setChartTimeframe(btn.dataset.tf);
                 });
 
-                // Default to daily with up to 5 years
+                // Default to 15m
+                priceZoom = 1.0;
                 await setChartTimeframe('15m');
 
-                // Scroll wheel on price axis = vertical pan (shift chart up/down)
-                let priceOffset = 0;
+                // Scroll wheel on price axis = vertical zoom (stretch/compress price scale)
                 container.addEventListener('wheel', (e) => {
                     const rect = container.getBoundingClientRect();
                     const mouseX = e.clientX - rect.left;
                     if (mouseX < rect.width - 70) return;
 
                     e.preventDefault();
-                    // Scroll up = shift chart up (see lower prices), down = shift down
-                    const step = e.deltaY > 0 ? 0.03 : -0.03;
-                    priceOffset += step;
-                    // Clamp so we don't lose the chart entirely
-                    priceOffset = Math.max(-0.4, Math.min(0.4, priceOffset));
-
-                    const topMargin = 0.1 + priceOffset;
-                    const bottomMargin = 0.1 - priceOffset;
-                    lwChart.priceScale('right').applyOptions({
-                        autoScale: false,
-                        scaleMargins: {
-                            top: Math.max(0.01, Math.min(0.8, topMargin)),
-                            bottom: Math.max(0.01, Math.min(0.8, bottomMargin)),
-                        },
-                    });
+                    const factor = e.deltaY > 0 ? 1.1 : 0.9;
+                    priceZoom = Math.max(0.15, Math.min(6, priceZoom * factor));
+                    zoomToTradeLevels(currentChartTrade);
                 }, { passive: false });
 
                 // Resize handling
