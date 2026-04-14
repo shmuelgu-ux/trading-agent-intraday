@@ -1178,6 +1178,39 @@
                     applyPriceRange();
                 }, { passive: false, capture: true });
 
+                // Vertical pan on chart area: drag up/down shifts the price range.
+                // Runs alongside lightweight-charts' own horizontal drag so diagonal
+                // drags pan both axes simultaneously.
+                let dragLastY = null;
+                container.addEventListener('mousedown', (e) => {
+                    if (e.button !== 0) return;
+                    const axisW = (lwChart && lwChart.priceScale('right').width()) || 60;
+                    const rect = container.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    if (mx >= rect.width - axisW) return;
+                    if (my >= rect.height - 30) return;
+                    dragLastY = e.clientY;
+                });
+                container.addEventListener('mousemove', (e) => {
+                    if (dragLastY === null || !priceZoomRange) return;
+                    const deltaY = e.clientY - dragLastY;
+                    if (deltaY === 0) return;
+                    dragLastY = e.clientY;
+                    const rect = container.getBoundingClientRect();
+                    const plotHeight = Math.max(1, rect.height - 30);
+                    const rangeSize = priceZoomRange.max - priceZoomRange.min;
+                    const priceDelta = -deltaY * (rangeSize / plotHeight);
+                    priceZoomRange = {
+                        min: priceZoomRange.min + priceDelta,
+                        max: priceZoomRange.max + priceDelta,
+                    };
+                    applyPriceRange();
+                });
+                const endDrag = () => { dragLastY = null; };
+                container.addEventListener('mouseup', endDrag);
+                container.addEventListener('mouseleave', endDrag);
+
                 // Resize handling
                 lwResizeObserver = new ResizeObserver(entries => {
                     if (!entries[0] || !lwChart) return;
