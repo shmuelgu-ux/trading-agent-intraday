@@ -1003,7 +1003,7 @@
         let lwCandleSeries = null;
         let currentChartTrade = null;
         let lwResizeObserver = null;
-        let priceZoom = 1.0;  // 1.0 = default range; <1 zooms in vertically; >1 zooms out
+        let priceZoomRange = null;  // { min, max } — current explicit visible price range
         const chartCache = {};
 
         function destroyChart() {
@@ -1060,20 +1060,21 @@
             const hi = Math.max(...prices);
             const spread = hi - lo;
             const padding = Math.max(spread * 1.5, hi * 0.005); // at least 0.5% of price
-            const baseMin = lo - padding;
-            const baseMax = hi + padding;
-            const center = (baseMin + baseMax) / 2;
-            const halfRange = ((baseMax - baseMin) / 2) * priceZoom;
-            lwChart.priceScale('right').applyOptions({
-                autoScale: false,
-                scaleMargins: { top: 0.1, bottom: 0.1 },
-            });
-            // Use setVisiblePriceRange if available, otherwise let autoScale handle it
+            priceZoomRange = { min: lo - padding, max: hi + padding };
+            applyPriceRange();
+            return;
+        }
+
+        function applyPriceRange() {
+            if (!lwCandleSeries || !priceZoomRange) return;
+            const range = { minValue: priceZoomRange.min, maxValue: priceZoomRange.max };
             try {
                 lwCandleSeries.applyOptions({
-                    autoscaleInfoProvider: () => ({
-                        priceRange: { minValue: center - halfRange, maxValue: center + halfRange },
-                    }),
+                    autoscaleInfoProvider: () => ({ priceRange: range }),
+                });
+                lwChart.priceScale('right').applyOptions({
+                    autoScale: false,
+                    scaleMargins: { top: 0.1, bottom: 0.1 },
                 });
             } catch (e) {
                 // Fallback: just let autoScale do its thing
@@ -1150,20 +1151,30 @@
                 });
 
                 // Default to 15m
-                priceZoom = 1.0;
+                priceZoomRange = null;
                 await setChartTimeframe('15m');
 
-                // Scroll wheel on price axis = vertical zoom (stretch/compress price scale)
+                // Scroll wheel on price axis = vertical zoom around current visible center.
+                // Capture phase beats lightweight-charts' own wheel handler
+                // (which would otherwise zoom the time axis).
                 container.addEventListener('wheel', (e) => {
+                    const axisWidth = (lwChart && lwChart.priceScale('right').width()) || 60;
                     const rect = container.getBoundingClientRect();
                     const mouseX = e.clientX - rect.left;
-                    if (mouseX < rect.width - 70) return;
-
+                    if (mouseX < rect.width - axisWidth - 20) return;
                     e.preventDefault();
-                    const factor = e.deltaY > 0 ? 1.1 : 0.9;
-                    priceZoom = Math.max(0.15, Math.min(6, priceZoom * factor));
-                    zoomToTradeLevels(currentChartTrade);
-                }, { passive: false });
+                    e.stopPropagation();
+                    if (!priceZoomRange) return;
+                    const factor = e.deltaY > 0 ? 1.12 : 0.88;
+                    const center = (priceZoomRange.min + priceZoomRange.max) / 2;
+                    const halfRange = ((priceZoomRange.max - priceZoomRange.min) / 2) * factor;
+                    const minHalf = Math.abs(center) * 0.001 + 0.01;
+                    priceZoomRange = {
+                        min: center - Math.max(minHalf, halfRange),
+                        max: center + Math.max(minHalf, halfRange),
+                    };
+                    applyPriceRange();
+                }, { passive: false, capture: true });
 
                 // Resize handling
                 lwResizeObserver = new ResizeObserver(entries => {
