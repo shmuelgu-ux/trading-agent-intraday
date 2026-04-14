@@ -796,7 +796,7 @@
             </div>
             <div class="kpi">
                 <div class="kpi-icon">$</div>
-                <div class="kpi-label">רווח/הפסד לייב</div>
+                <div class="kpi-label">רווח/הפסד יומי</div>
                 <div class="kpi-value" id="livePnl">--</div>
                 <div class="kpi-sub" id="livePnlPct"></div>
             </div>
@@ -1349,11 +1349,13 @@
             eqPctEl.className = 'kpi-change ' + (totalReturnPct >= 0 ? 'up' : 'down');
             $('equitySub').textContent = 'הון התחלתי: ' + money(cap);
 
-            // Live P&L = ONLY open positions (unrealized), not closed
-            const unrealizedPct = cap > 0 ? ((pnl / cap) * 100) : 0;
-            $('livePnl').textContent = (pnl >= 0 ? '+' : '') + money(pnl);
-            $('livePnl').className = 'kpi-value' + (pnl >= 0 ? ' positive' : ' negative');
-            $('livePnlPct').textContent = (unrealizedPct >= 0 ? '+' : '') + unrealizedPct.toFixed(2) + '%';
+            // Daily P&L = realized today (trades closed since midnight ET) + unrealized now
+            const realizedToday = d.account.realized_pnl_today || 0;
+            const dailyPnl = pnl + realizedToday;
+            const dailyPct = cap > 0 ? ((dailyPnl / cap) * 100) : 0;
+            $('livePnl').textContent = (dailyPnl >= 0 ? '+' : '') + money(dailyPnl);
+            $('livePnl').className = 'kpi-value' + (dailyPnl >= 0 ? ' positive' : ' negative');
+            $('livePnlPct').textContent = (dailyPct >= 0 ? '+' : '') + dailyPct.toFixed(2) + '%';
 
             // Buying power box is kept as a placeholder for future leverage support.
             // Display-only — the system currently trades on equity only (no margin).

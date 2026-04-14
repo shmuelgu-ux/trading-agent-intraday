@@ -336,3 +336,28 @@ class JournalService:
                 "win_rate": (wins / closed) if closed else 0,
                 "total_pnl": round(total_pnl, 2),
             }
+
+    async def get_realized_pnl_today(self) -> float:
+        """Sum of PnL from trades closed since midnight ET.
+
+        Used by the intraday dashboard's "daily P&L" KPI. DB timestamps are
+        stored UTC-naive, so we compute the current ET date's midnight and
+        convert it to UTC-naive before filtering.
+        """
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        utc = ZoneInfo("UTC")
+        now_et = datetime.now(et)
+        start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_utc_naive = start_et.astimezone(utc).replace(tzinfo=None)
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(func.sum(TradeLog.pnl)).where(
+                    TradeLog.action_taken == "EXECUTE",
+                    TradeLog.pnl.is_not(None),
+                    TradeLog.exit_timestamp >= start_utc_naive,
+                )
+            )
+            total = result.scalar()
+            return float(total or 0.0)
