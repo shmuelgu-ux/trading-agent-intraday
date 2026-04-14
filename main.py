@@ -64,6 +64,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup reconcile failed (non-fatal): {e}")
 
+    # Startup learning check: if 10+ closed trades accumulated since the
+    # last report (or ever), generate one now without waiting for the
+    # next position to close.
+    try:
+        report = await learner.check_and_learn()
+        if report:
+            logger.info(f"Startup learning: generated report #{report['id']}")
+    except Exception as e:
+        logger.warning(f"Startup learning failed (non-fatal): {e}")
+
     try:
         account = alpaca.get_account()
         logger.info(f"Account equity: ${account['equity']:,.2f}")
