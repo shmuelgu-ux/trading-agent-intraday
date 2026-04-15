@@ -11,22 +11,27 @@ MAX_JOURNAL_ROWS = 30_000
 
 
 def _ibkr_pro_commission_leg(shares: int, price: float, is_sell: bool) -> float:
-    """Estimated IBKR Pro Fixed commission for one side of a trade.
+    """Estimated IBKR Pro Tiered commission for one side of a trade.
 
     Display-only — used by the dashboard "commissions" KPI so the user sees
     what a real IBKR account would have charged. Does not affect P&L,
     equity, or decision making anywhere in the system.
 
-    Components:
-      - Broker commission: max($1.00, min(shares * $0.005, value * 1%))
+    Tiered plan (starting tier, before volume discounts):
+      - Broker commission: $0.0035/share, NO minimum per order, max 1% of value
       - SEC fee (sells only): 0.00278% of principal
       - FINRA TAF (sells only): $0.000166/share, capped at $8.30
-      - Exchange/clearing: rough ~$0.003/share on both sides
+      - Exchange/clearing pass-through: rough ~$0.003/share (taker rate)
+
+    Notes:
+      - This is a conservative estimate that assumes all legs take liquidity.
+        In practice take-profit (limit) exits earn small rebates, making real
+        costs slightly lower.
     """
     if shares <= 0 or price <= 0:
         return 0.0
     value = shares * price
-    broker = max(1.00, min(shares * 0.005, value * 0.01))
+    broker = min(shares * 0.0035, value * 0.01)
     total = broker + (shares * 0.003)
     if is_sell:
         total += value * 0.0000278

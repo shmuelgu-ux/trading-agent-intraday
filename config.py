@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
 
     # Capital Management
-    max_capital: float = Field(default=2000.0, gt=0)
+    max_capital: float = Field(default=25000.0, gt=0)
 
     # Risk Parameters — intraday
     # Smaller per-trade risk because intraday runs many more trades than
