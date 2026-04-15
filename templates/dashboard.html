@@ -802,11 +802,6 @@
             </div>
             <div class="kpi">
                 <div class="kpi-icon">$</div>
-                <div class="kpi-label">כוח קנייה</div>
-                <div class="kpi-value" id="buyingPower">--</div>
-            </div>
-            <div class="kpi">
-                <div class="kpi-icon">$</div>
                 <div class="kpi-label">עמלות</div>
                 <div class="kpi-value" id="commissions">--</div>
                 <div class="kpi-sub" id="equityAfterCommissions"></div>
@@ -1362,10 +1357,6 @@
             $('livePnl').textContent = (dailyPnl >= 0 ? '+' : '') + money(dailyPnl);
             $('livePnl').className = 'kpi-value' + (dailyPnl >= 0 ? ' positive' : ' negative');
             $('livePnlPct').textContent = (dailyPct >= 0 ? '+' : '') + dailyPct.toFixed(2) + '%';
-
-            // Buying power box is kept as a placeholder for future leverage support.
-            // Display-only — the system currently trades on equity only (no margin).
-            $('buyingPower').textContent = '—';
 
             // Commissions: estimated IBKR Pro Fixed commissions over all executed
             // trades. Display only — NOT deducted from P&L or equity anywhere else.

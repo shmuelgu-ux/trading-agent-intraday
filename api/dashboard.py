@@ -59,7 +59,6 @@ async def system_status():
     if account:
         account["trading_capital"] = trading_capital
         account["live_equity"] = round(live_equity, 2)
-        account["buying_power_live"] = round(live_equity * 8, 2)
         account["unrealized_pnl"] = round(total_unrealized_pnl, 2)
         account["realized_pnl"] = round(realized_pnl, 2)
         account["realized_pnl_today"] = round(realized_pnl_today, 2)
