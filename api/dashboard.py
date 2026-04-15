@@ -38,6 +38,7 @@ async def system_status():
     total_unrealized_pnl = sum(p.get("unrealized_pnl", 0) for p in positions)
     realized_pnl = 0.0
     realized_pnl_today = 0.0
+    total_commissions = 0.0
     if journal:
         try:
             stats = await journal.get_stats()
@@ -48,6 +49,10 @@ async def system_status():
             realized_pnl_today = await journal.get_realized_pnl_today()
         except Exception:
             realized_pnl_today = 0.0
+        try:
+            total_commissions = await journal.get_total_commissions()
+        except Exception:
+            total_commissions = 0.0
     trading_capital = settings.max_capital
     total_pnl = realized_pnl + total_unrealized_pnl
     live_equity = trading_capital + total_pnl
@@ -58,6 +63,7 @@ async def system_status():
         account["unrealized_pnl"] = round(total_unrealized_pnl, 2)
         account["realized_pnl"] = round(realized_pnl, 2)
         account["realized_pnl_today"] = round(realized_pnl_today, 2)
+        account["total_commissions"] = round(total_commissions, 2)
         account["pnl_percent"] = round((total_pnl / trading_capital) * 100, 2) if trading_capital > 0 else 0
     return {
         "status": "running",

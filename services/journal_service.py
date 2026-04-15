@@ -10,6 +10,30 @@ from models.orders import RiskParams
 MAX_JOURNAL_ROWS = 30_000
 
 
+def _ibkr_pro_commission_leg(shares: int, price: float, is_sell: bool) -> float:
+    """Estimated IBKR Pro Fixed commission for one side of a trade.
+
+    Display-only — used by the dashboard "commissions" KPI so the user sees
+    what a real IBKR account would have charged. Does not affect P&L,
+    equity, or decision making anywhere in the system.
+
+    Components:
+      - Broker commission: max($1.00, min(shares * $0.005, value * 1%))
+      - SEC fee (sells only): 0.00278% of principal
+      - FINRA TAF (sells only): $0.000166/share, capped at $8.30
+      - Exchange/clearing: rough ~$0.003/share on both sides
+    """
+    if shares <= 0 or price <= 0:
+        return 0.0
+    value = shares * price
+    broker = max(1.00, min(shares * 0.005, value * 0.01))
+    total = broker + (shares * 0.003)
+    if is_sell:
+        total += value * 0.0000278
+        total += min(shares * 0.000166, 8.30)
+    return total
+
+
 class JournalService:
     """Persists every trade decision (executed or rejected) to the database."""
 
@@ -336,6 +360,41 @@ class JournalService:
                 "win_rate": (wins / closed) if closed else 0,
                 "total_pnl": round(total_pnl, 2),
             }
+
+    async def get_total_commissions(self) -> float:
+        """Sum estimated IBKR Pro commissions over every EXECUTE trade.
+
+        Each executed trade contributes the entry leg always; the exit leg
+        is only added if the trade has been closed (has exit_price). For
+        longs, the sell leg is the exit; for shorts, the sell leg is the
+        entry. Regulatory fees (SEC, FINRA TAF) only hit the sell leg.
+        """
+        async with async_session() as session:
+            result = await session.execute(
+                select(
+                    TradeLog.side,
+                    TradeLog.position_size,
+                    TradeLog.entry_price,
+                    TradeLog.exit_price,
+                    TradeLog.status,
+                ).where(TradeLog.action_taken == "EXECUTE")
+            )
+            total = 0.0
+            for side, shares, entry, exit_price, status in result.all():
+                shares = int(shares or 0)
+                entry = float(entry or 0.0)
+                if shares <= 0 or entry <= 0:
+                    continue
+                is_short = side in ("sell", "short")
+                # Entry leg: short entry = sell (regulatory applies)
+                total += _ibkr_pro_commission_leg(shares, entry, is_sell=is_short)
+                # Exit leg: only if closed
+                if exit_price and status == "CLOSED":
+                    ep = float(exit_price)
+                    if ep > 0:
+                        # Long exit = sell; short exit = buy
+                        total += _ibkr_pro_commission_leg(shares, ep, is_sell=not is_short)
+            return round(total, 2)
 
     async def get_realized_pnl_today(self) -> float:
         """Sum of PnL from trades closed since midnight ET.
