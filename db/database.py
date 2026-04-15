@@ -4,7 +4,7 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Text, Float, Integer, DateTime, Index, text
+from sqlalchemy import Text, Float, Integer, DateTime, Boolean, Date, Index, text
 from config import settings
 
 
@@ -65,6 +65,27 @@ class TradeLog(Base):
         # get_risk_for_tickers: WHERE ticker IN (...) AND action_taken='EXECUTE'
         Index("ix_trade_log_ticker_action", "ticker", "action_taken"),
     )
+
+
+class SystemState(Base):
+    """Singleton row tracking manual kill switch + daily circuit breaker state.
+
+    Kill switch: user-triggered via dashboard. Stops the scanner from opening
+    new positions until the user explicitly resumes. Persists across restarts.
+
+    Circuit breaker: automatic. Snapshots equity at the start of each trading
+    day; if equity drops 10% below that snapshot any time during the day,
+    the scanner stops for the rest of the day. Resets automatically on the
+    next trading day.
+    """
+    __tablename__ = "system_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    kill_switch_activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    daily_equity_snapshot: Mapped[float | None] = mapped_column(Float, nullable=True)
+    daily_snapshot_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    circuit_breaker_fired_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
 
 
 class LearningReport(Base):

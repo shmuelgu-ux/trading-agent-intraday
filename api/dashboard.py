@@ -1,6 +1,9 @@
+import asyncio
 from fastapi import APIRouter
 from services.alpaca_client import AlpacaClient
 from services.journal_service import JournalService
+from services.system_state_service import SystemStateService
+from services.email_service import EmailService
 from config import settings
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -9,6 +12,8 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 alpaca: AlpacaClient | None = None
 journal: JournalService | None = None
 scanner = None
+system_state: SystemStateService | None = None
+email_svc: EmailService | None = None
 scanner_state = {
     "started": False,
     "market_open_seen": False,
@@ -18,12 +23,22 @@ scanner_state = {
 }
 
 
-def set_services(alpaca_client: AlpacaClient, journal_service: JournalService, scanner_obj=None):
-    global alpaca, journal, scanner
+def set_services(
+    alpaca_client: AlpacaClient,
+    journal_service: JournalService,
+    scanner_obj=None,
+    system_state_service: SystemStateService | None = None,
+    email_service: EmailService | None = None,
+):
+    global alpaca, journal, scanner, system_state, email_svc
     alpaca = alpaca_client
     journal = journal_service
     if scanner_obj:
         scanner = scanner_obj
+    if system_state_service:
+        system_state = system_state_service
+    if email_service:
+        email_svc = email_service
 
 
 @router.get("/status")
@@ -64,6 +79,12 @@ async def system_status():
         account["realized_pnl_today"] = round(realized_pnl_today, 2)
         account["total_commissions"] = round(total_commissions, 2)
         account["pnl_percent"] = round((total_pnl / trading_capital) * 100, 2) if trading_capital > 0 else 0
+    safety_state = {}
+    if system_state:
+        try:
+            safety_state = await system_state.get_status()
+        except Exception:
+            safety_state = {}
     return {
         "status": "running",
         "alpaca_connected": alpaca.is_connected if alpaca else False,
@@ -75,7 +96,48 @@ async def system_status():
             "max_open_positions": settings.max_open_positions,
             "default_rr_ratio": settings.default_rr_ratio,
         },
+        "safety": safety_state,
     }
+
+
+@router.post("/kill-switch/activate")
+async def kill_switch_activate():
+    """Manually flip the kill switch ON.
+
+    1) Closes every open position at market.
+    2) Sets a persistent flag that stops the scanner from opening new trades.
+    3) Sends an alert email so you always have a paper trail.
+    """
+    if not system_state:
+        return {"status": "error", "message": "system_state not initialized"}
+    await system_state.activate_kill_switch()
+    closed = 0
+    try:
+        if alpaca and alpaca._client:
+            result = await asyncio.to_thread(alpaca.close_all_positions)
+            closed = len(result) if isinstance(result, list) else 0
+    except Exception as e:
+        return {"status": "partial", "message": f"Kill switch set but close_all failed: {e}"}
+    if email_svc:
+        try:
+            await email_svc.send_alert(
+                "Kill switch activated",
+                f"The kill switch has been manually activated from the dashboard.\n"
+                f"All open positions were closed ({closed} orders).\n"
+                f"Scanner will not open new trades until you resume.",
+            )
+        except Exception:
+            pass
+    return {"status": "activated", "closed_positions": closed}
+
+
+@router.post("/kill-switch/resume")
+async def kill_switch_resume():
+    """Clear the kill switch so the scanner can resume trading."""
+    if not system_state:
+        return {"status": "error", "message": "system_state not initialized"}
+    await system_state.deactivate_kill_switch()
+    return {"status": "resumed"}
 
 
 @router.get("/positions")

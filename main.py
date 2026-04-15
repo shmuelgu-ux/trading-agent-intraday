@@ -15,6 +15,8 @@ from services.alpaca_client import AlpacaClient
 from services.journal_service import JournalService
 from services.reconciliation_service import ReconciliationService
 from services.learning_service import LearningService
+from services.system_state_service import SystemStateService
+from services.email_service import EmailService
 from api import dashboard
 
 # Configure logging
@@ -49,11 +51,15 @@ async def lifespan(app: FastAPI):
     # Learning service — analyzes every 10 closed trades
     learner = LearningService()
 
+    # Safety rails: manual kill switch + daily circuit breaker
+    system_state = SystemStateService()
+    email_svc = EmailService()
+
     # Create scanner early so we can pass to dashboard
     scanner = StockScanner(alpaca)
 
     # Inject into routers
-    dashboard.set_services(alpaca, journal, scanner)
+    dashboard.set_services(alpaca, journal, scanner, system_state, email_svc)
 
     # Startup catch-up: any positions that closed while the server was
     # down won't have been reconciled yet. Do it once before anything else.
@@ -192,6 +198,7 @@ async def lifespan(app: FastAPI):
             last_position_count = -1
             last_market_check = False
             force_close_fired = False  # one-shot per day
+            last_alert_sent: dict[str, dt] = {}  # error-type -> last alert time
 
             interval = max(60, int(settings.scanner_interval_seconds))
 
@@ -220,6 +227,13 @@ async def lifespan(app: FastAPI):
                         logger.info("=" * 40)
                         last_market_check = True
                         dashboard.scanner_state["market_open_seen"] = True
+                        # Capture today's equity baseline for the circuit breaker.
+                        # ensure_daily_snapshot also clears yesterday's breaker.
+                        try:
+                            acc = alpaca.get_account()
+                            await system_state.ensure_daily_snapshot(acc.get("equity", 0.0) or 0.0)
+                        except Exception as e:
+                            logger.warning(f"Daily snapshot failed (non-fatal): {e}")
 
                     # End-of-day force close — retry until positions are
                     # actually flat. The flag is only set AFTER Alpaca
@@ -292,6 +306,42 @@ async def lifespan(app: FastAPI):
                         await asyncio.sleep(interval)
                         continue
 
+                    # Safety rail check: stop here if kill switch is set or the
+                    # circuit breaker has fired for today. Open positions keep
+                    # their own SL/TP — we only block NEW entries.
+                    enabled, reason = await system_state.is_trading_enabled()
+                    if not enabled:
+                        dashboard.scanner_state["last_action"] = f"safety stop: {reason}"
+                        last_position_count = current_positions
+                        await asyncio.sleep(interval)
+                        continue
+
+                    # Evaluate the daily loss threshold on the latest equity.
+                    try:
+                        acc = alpaca.get_account()
+                        current_equity = acc.get("equity", 0.0) or 0.0
+                        fired = await system_state.check_circuit_breaker(current_equity)
+                        if fired:
+                            if email_svc:
+                                try:
+                                    snapshot = (await system_state.get_status()).get("daily_equity_snapshot") or 0
+                                    await email_svc.send_alert(
+                                        "Circuit breaker fired — 10% daily loss",
+                                        f"The daily loss threshold has been crossed.\n\n"
+                                        f"Snapshot equity (market open): ${snapshot:,.2f}\n"
+                                        f"Current equity: ${current_equity:,.2f}\n\n"
+                                        f"Scanner will not open new trades for the rest of today. "
+                                        f"It will resume automatically at the next market open."
+                                    )
+                                except Exception:
+                                    pass
+                            dashboard.scanner_state["last_action"] = "circuit breaker fired (-10%)"
+                            last_position_count = current_positions
+                            await asyncio.sleep(interval)
+                            continue
+                    except Exception as e:
+                        logger.error(f"Circuit breaker check failed (continuing): {e}")
+
                     # Time-based scan: every tick, try to fill open slots
                     slots_available = settings.max_open_positions - current_positions
                     if slots_available > 0:
@@ -320,8 +370,22 @@ async def lifespan(app: FastAPI):
                     error_msg = f"loop: {type(e).__name__}: {e}"
                     logger.error(f"Scanner loop error: {error_msg}")
                     import traceback
-                    logger.error(traceback.format_exc())
+                    tb_text = traceback.format_exc()
+                    logger.error(tb_text)
                     dashboard.scanner_state["error"] = error_msg
+                    # Rate-limit to one email per scanner crash type per hour
+                    # so a tight crash loop doesn't spam the inbox.
+                    now = dt.now()
+                    last = last_alert_sent.get(type(e).__name__)
+                    if email_svc and (not last or (now - last).total_seconds() > 3600):
+                        last_alert_sent[type(e).__name__] = now
+                        try:
+                            await email_svc.send_alert(
+                                f"Scanner error: {type(e).__name__}",
+                                f"Scanner hit an unhandled exception:\n\n{error_msg}\n\n{tb_text[:3000]}",
+                            )
+                        except Exception:
+                            pass
                     await asyncio.sleep(60)
 
         scanner_task = asyncio.create_task(run_scanner())

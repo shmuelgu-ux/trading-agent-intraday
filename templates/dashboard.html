@@ -100,6 +100,42 @@
             color: var(--text-primary);
             border-color: var(--border-light);
         }
+        .kill-btn {
+            background: #dc2626;
+            border: 1px solid #b91c1c;
+            color: #fff;
+            padding: 7px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .kill-btn:hover { background: #b91c1c; }
+        .resume-btn {
+            background: #059669;
+            border: 1px solid #047857;
+            color: #fff;
+            padding: 7px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        .resume-btn:hover { background: #047857; }
+        .safety-banner {
+            background: #7f1d1d;
+            color: #fecaca;
+            text-align: center;
+            padding: 10px 20px;
+            font-weight: 600;
+            font-size: 14px;
+            border-bottom: 2px solid #ef4444;
+        }
+        .safety-banner.warning { background: #78350f; color: #fde68a; border-color: #f59e0b; }
         .market-timer {
             display: flex;
             align-items: center;
@@ -780,9 +816,12 @@
         <div class="header-right">
             <div class="market-timer" id="marketTimer"></div>
             <span class="last-update" id="lastUpdate"></span>
+            <button class="kill-btn" id="killBtn" onclick="activateKillSwitch()">⛔ עצירת חירום</button>
+            <button class="resume-btn" id="resumeBtn" onclick="resumeKillSwitch()" style="display:none;">▶ הפעל מחדש</button>
             <button class="refresh-btn" onclick="refreshAll()">רענון</button>
         </div>
     </header>
+    <div id="safetyBanner" class="safety-banner" style="display:none;"></div>
 
     <div class="container">
         <!-- KPI Cards -->
@@ -1367,6 +1406,10 @@
 
             $('openPositions').textContent = d.open_positions_count;
             $('maxPositions').textContent = 'מקסימום: ' + d.risk_config.max_open_positions;
+
+            // Safety banner + kill/resume buttons reflect the current
+            // kill-switch and circuit-breaker state.
+            updateSafetyUI(d.safety);
         }
 
         async function loadRisk() {
@@ -1558,6 +1601,71 @@
         async function refreshAll() {
             await Promise.all([loadStatus(), loadRisk(), loadStats(), loadJournal()]);
             $('lastUpdate').textContent = 'עדכון אחרון: ' + new Date().toLocaleTimeString('he-IL');
+        }
+
+        // ====================================================================
+        // Kill Switch + safety banner
+        // ====================================================================
+        async function activateKillSwitch() {
+            const ok = confirm(
+                'לחיצה על "אישור" תסגור את כל הפוזיציות הפתוחות במיידי ותעצור את הסורק.\n\n' +
+                'המערכת לא תחזור לפעילות עד שתלחץ "הפעל מחדש" ידנית.\n\n' +
+                'להמשיך?'
+            );
+            if (!ok) return;
+            try {
+                const r = await fetch('/api/kill-switch/activate', { method: 'POST' });
+                const d = await r.json();
+                if (d.status === 'activated' || d.status === 'partial') {
+                    alert('עצירת חירום הופעלה. נסגרו ' + (d.closed_positions || 0) + ' פוזיציות.');
+                } else {
+                    alert('בעיה בהפעלה: ' + (d.message || 'unknown'));
+                }
+                refreshAll();
+            } catch (e) {
+                alert('שגיאה: ' + e);
+            }
+        }
+
+        async function resumeKillSwitch() {
+            const ok = confirm('להפעיל מחדש את המערכת? הסורק יחזור לחפש עסקאות.');
+            if (!ok) return;
+            try {
+                await fetch('/api/kill-switch/resume', { method: 'POST' });
+                refreshAll();
+            } catch (e) {
+                alert('שגיאה: ' + e);
+            }
+        }
+
+        function updateSafetyUI(safety) {
+            const banner = $('safetyBanner');
+            const killBtn = $('killBtn');
+            const resumeBtn = $('resumeBtn');
+            if (!safety) {
+                banner.style.display = 'none';
+                killBtn.style.display = '';
+                resumeBtn.style.display = 'none';
+                return;
+            }
+            if (safety.kill_switch_active) {
+                banner.textContent = '⛔ עצירת חירום פעילה — הסורק לא פותח עסקאות חדשות. לחץ "הפעל מחדש" להמשיך.';
+                banner.className = 'safety-banner';
+                banner.style.display = '';
+                killBtn.style.display = 'none';
+                resumeBtn.style.display = '';
+            } else if (safety.circuit_breaker_active) {
+                banner.textContent = '⚠ מנתק זרם (Circuit Breaker) נורה — הפסד יומי עבר ' +
+                    (safety.circuit_breaker_threshold_pct || 10) + '%. הסורק ייפתח מחדש בפתיחת השוק מחר.';
+                banner.className = 'safety-banner warning';
+                banner.style.display = '';
+                killBtn.style.display = '';
+                resumeBtn.style.display = 'none';
+            } else {
+                banner.style.display = 'none';
+                killBtn.style.display = '';
+                resumeBtn.style.display = 'none';
+            }
         }
 
         // Returns a real Date object for a given NY wall-clock time, accounting
