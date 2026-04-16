@@ -186,6 +186,38 @@
             transform: translateY(-2px);
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
+        .kpi-clickable { cursor: pointer; }
+        .kpi-clickable:hover {
+            border-color: var(--accent, #3b82f6);
+        }
+        .wr-trade-row {
+            display: grid;
+            grid-template-columns: 70px 80px 1fr 110px 130px;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .wr-trade-row.win { background: rgba(5,150,105,0.08); border-color: rgba(5,150,105,0.25); }
+        .wr-trade-row.loss { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.25); }
+        .wr-tag {
+            font-weight: 700;
+            text-align: center;
+            padding: 4px 0;
+            border-radius: 6px;
+            font-size: 11px;
+        }
+        .wr-tag.win { background: #059669; color: #fff; }
+        .wr-tag.loss { background: #dc2626; color: #fff; }
+        .wr-pnl { text-align: left; font-weight: 700; direction: ltr; }
+        .wr-pnl.win { color: #059669; }
+        .wr-pnl.loss { color: #dc2626; }
+        .wr-prices { color: var(--text-secondary); font-size: 12px; direction: ltr; text-align: left; }
+        .wr-ticker { font-weight: 700; font-size: 14px; }
+        .wr-date { color: var(--text-secondary); font-size: 11px; }
         .kpi-label {
             font-size: 12px;
             font-weight: 500;
@@ -850,7 +882,7 @@
                 <div class="kpi-value" id="openPositions">--</div>
                 <div class="kpi-sub" id="maxPositions"></div>
             </div>
-            <div class="kpi">
+            <div class="kpi kpi-clickable" onclick="openWinRateModal()" title="לחץ לראות את רשימת העסקאות">
                 <div class="kpi-label">אחוז הצלחה</div>
                 <div class="kpi-value" id="winRate">--</div>
                 <div class="kpi-sub" id="winLoss"></div>
@@ -918,6 +950,21 @@
         </div>
 
         <!-- Learning Report Modal -->
+        <div class="chart-modal" id="winRateModal" role="dialog" aria-modal="true">
+            <div class="chart-modal-content" style="max-width:900px;overflow-y:auto;">
+                <div class="chart-modal-header">
+                    <div class="chart-modal-title">
+                        <span class="chart-symbol">עסקאות סגורות</span>
+                        <span class="chart-side-tag" id="winRateSummary"></span>
+                    </div>
+                    <button class="chart-close-btn" onclick="closeWinRateModal()">×</button>
+                </div>
+                <div id="winRateContent" style="padding:24px;">
+                    <div class="chart-loading">טוען...</div>
+                </div>
+            </div>
+        </div>
+
         <div class="chart-modal" id="learningModal" role="dialog" aria-modal="true">
             <div class="chart-modal-content" style="max-width:900px;overflow-y:auto;">
                 <div class="chart-modal-header">
@@ -1285,6 +1332,16 @@
                     closeChartModal();
                 }
             });
+            // Win-rate modal — backdrop click + Escape
+            const wrModal = $('winRateModal');
+            if (wrModal) wrModal.addEventListener('click', (e) => {
+                if (e.target === wrModal) closeWinRateModal();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && wrModal && wrModal.classList.contains('open')) {
+                    closeWinRateModal();
+                }
+            });
         });
 
         // Lookup caches so the click handlers can resolve ticker->trade without
@@ -1601,6 +1658,71 @@
         async function refreshAll() {
             await Promise.all([loadStatus(), loadRisk(), loadStats(), loadJournal()]);
             $('lastUpdate').textContent = 'עדכון אחרון: ' + new Date().toLocaleTimeString('he-IL');
+        }
+
+        // ====================================================================
+        // Success rate modal — shows every closed trade that factors into the
+        // KPI, with a win/loss tag and the realized P&L.
+        // ====================================================================
+        async function openWinRateModal() {
+            const modal = $('winRateModal');
+            const content = $('winRateContent');
+            const summary = $('winRateSummary');
+            modal.classList.add('open');
+            document.body.style.overflow = 'hidden';
+            content.innerHTML = '<div class="chart-loading">טוען עסקאות סגורות...</div>';
+            summary.textContent = '';
+            try {
+                // Pull enough closed trades to show the complete set that
+                // the win-rate calc uses. 500 is well above any realistic
+                // journal size per user.
+                const d = await fetchJSON('/api/journal?status=CLOSED&per_page=500&page=1');
+                if (!d || !d.trades || d.trades.length === 0) {
+                    content.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-secondary);">אין עדיין עסקאות סגורות.</div>';
+                    return;
+                }
+                let wins = 0, losses = 0, winPnl = 0, lossPnl = 0;
+                d.trades.forEach(t => {
+                    if ((t.pnl || 0) > 0) { wins++; winPnl += t.pnl; }
+                    else { losses++; lossPnl += t.pnl || 0; }
+                });
+                const total = wins + losses;
+                const wr = total > 0 ? ((wins / total) * 100).toFixed(0) : 0;
+                summary.textContent = wins + ' מנצחות / ' + losses + ' מפסידות (' + wr + '%)';
+
+                const sideMap = {buy:'קנייה', sell:'מכירה', long:'קנייה', short:'מכירה'};
+                let html = '<div style="margin-bottom:16px;padding:12px;background:var(--bg-card);border-radius:10px;display:flex;gap:20px;flex-wrap:wrap;">' +
+                    '<div>סך רווח מעסקאות מנצחות: <strong style="color:#059669">' + money(winPnl) + '</strong></div>' +
+                    '<div>סך הפסד מעסקאות מפסידות: <strong style="color:#dc2626">' + money(lossPnl) + '</strong></div>' +
+                    '<div>נטו: <strong style="color:' + ((winPnl+lossPnl)>=0?'#059669':'#dc2626') + '">' + money(winPnl + lossPnl) + '</strong></div>' +
+                    '</div>';
+
+                d.trades.forEach(t => {
+                    const isWin = (t.pnl || 0) > 0;
+                    const cls = isWin ? 'win' : 'loss';
+                    const exitDate = t.exit_timestamp
+                        ? new Date(t.exit_timestamp.endsWith('Z') ? t.exit_timestamp : t.exit_timestamp + 'Z')
+                            .toLocaleString('he-IL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})
+                        : '--';
+                    const entryStr = t.entry_price ? money(t.entry_price) : '--';
+                    const exitStr = t.exit_price ? money(t.exit_price) : '--';
+                    html += '<div class="wr-trade-row ' + cls + '">' +
+                        '<div class="wr-tag ' + cls + '">' + (isWin ? '✓ רווח' : '✗ הפסד') + '</div>' +
+                        '<div class="wr-ticker">' + t.ticker + '</div>' +
+                        '<div class="wr-prices">' + entryStr + ' → ' + exitStr + ' <span style="color:var(--text-secondary);margin-right:8px;">(' + (sideMap[t.side] || t.side) + ')</span></div>' +
+                        '<div class="wr-pnl ' + cls + '">' + (t.pnl >= 0 ? '+' : '') + money(t.pnl || 0) + '</div>' +
+                        '<div class="wr-date">' + exitDate + '</div>' +
+                        '</div>';
+                });
+                content.innerHTML = html;
+            } catch (e) {
+                content.innerHTML = '<div style="padding:24px;color:#dc2626;">שגיאה בטעינה: ' + e + '</div>';
+            }
+        }
+
+        function closeWinRateModal() {
+            $('winRateModal').classList.remove('open');
+            document.body.style.overflow = '';
         }
 
         // ====================================================================
