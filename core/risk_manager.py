@@ -175,31 +175,13 @@ class RiskManager:
                 f"חורג מהמקסימום {self.max_total_risk:.2%}"
             )
 
-        # 6) Minimum R:R ratio check — derive the floor from the configured
-        # default_rr_ratio so lowering the default in env doesn't accidentally
-        # reject every trade. Gives us ~10% tolerance under the default.
-        min_rr = max(1.0, self.default_rr_ratio - 0.1)
-        if risk_params.reward_risk_ratio < min_rr:
-            reasons.append(
-                f"יחס סיכוי/סיכון {risk_params.reward_risk_ratio:.2f} "
-                f"נמוך מהמינימום {min_rr:.2f}"
-            )
-
-        # 7) RSI extremes filter
-        rsi = signal.indicators.rsi
-        if rsi is not None:
-            if signal.action == SignalAction.BUY and rsi > 75:
-                reasons.append(f"RSI גבוה מדי לקנייה ({rsi:.1f} > 75) - קניית יתר")
-            elif signal.action == SignalAction.SELL and rsi < 25:
-                reasons.append(f"RSI נמוך מדי למכירה ({rsi:.1f} < 25) - מכירת יתר")
-
-        # 8) Trend alignment check
-        ema_trend = signal.indicators.ema_trend
-        if ema_trend:
-            if signal.action == SignalAction.BUY and ema_trend == "down":
-                reasons.append("קנייה נגד הטרנד - EMA מצביע על מגמה יורדת")
-            elif signal.action == SignalAction.SELL and ema_trend == "up":
-                reasons.append("מכירה נגד הטרנד - EMA מצביע על מגמה עולה")
+        # NOTE: RSI-extreme, trend-alignment, and min-RR filters were
+        # all removed — they were actively harmful for the Donchian
+        # breakout strategy (RSI > 75 is normal at a new high; trend
+        # alignment is redundant with the breakout itself; min RR is
+        # meaningless when there's no fixed TP). Portfolio-level checks
+        # above (max positions, duplicate ticker, per-trade risk, total
+        # risk) are retained — those are universal.
 
         is_valid = len(reasons) == 0
         return is_valid, reasons

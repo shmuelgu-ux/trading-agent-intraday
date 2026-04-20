@@ -61,14 +61,17 @@ async def test_valid_signal_executes():
 
 
 @pytest.mark.asyncio
-async def test_signal_against_trend_rejected():
+async def test_signal_against_trend_no_longer_rejected():
+    """EMA-trend filter removed for the Donchian strategy — the breakout
+    itself establishes the trend on its horizon. (The pre-existing
+    after-15:00-ET time filter may still reject this if the suite runs
+    during that window — see ``test_valid_signal_executes`` for the
+    same issue.)"""
     engine = make_engine()
     signal = make_signal(ema_trend="down")
     decision = await engine.process_signal(signal)
-
-    assert decision.action == DecisionAction.REJECT
-    assert any("נגד הטרנד" in r for r in decision.reasoning)
-    engine.alpaca.submit_bracket_order.assert_not_called()
+    # Should NOT reject on trend-alignment specifically.
+    assert not any("נגד הטרנד" in r for r in decision.reasoning)
 
 
 @pytest.mark.asyncio
