@@ -69,7 +69,19 @@ class SystemStateService:
         Called once per day when the market opens. If today's snapshot is
         missing or stale, writes a fresh one. Also clears yesterday's
         circuit breaker if it was set.
+
+        A non-positive equity (transient API/connection failure returning a
+        zero default) is refused: snapshotting 0 would silently disable the
+        circuit breaker for the entire day. We log and let the next
+        scanner tick try again.
         """
+        if current_equity <= 0:
+            logger.warning(
+                f"ensure_daily_snapshot: refusing to snapshot non-positive "
+                f"equity (${current_equity:,.2f}) — will retry next tick"
+            )
+            return
+
         async with async_session() as session:
             row = await self._load_or_create(session)
             today = date.today()

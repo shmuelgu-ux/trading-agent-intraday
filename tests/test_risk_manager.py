@@ -90,7 +90,9 @@ class TestValidation:
     def test_total_risk_exceeded(self):
         rm = RiskManager(max_total_risk=0.20)
         signal = make_signal()
-        is_valid, reasons = rm.validate_trade(signal, 2000, [], 0.19)
+        # At intraday's 1% per-trade default the signal consumes ~0.8% risk,
+        # so push current total close enough that the new trade tips us over.
+        is_valid, reasons = rm.validate_trade(signal, 2000, [], 0.195)
         assert not is_valid
         assert any("סיכון כולל" in r for r in reasons)
 

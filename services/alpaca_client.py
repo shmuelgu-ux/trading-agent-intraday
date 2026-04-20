@@ -102,6 +102,23 @@ class AlpacaClient:
         if not self._client:
             return self._dry_run_order(symbol, side, risk_params)
 
+        # Defensive validation before hitting Alpaca. A bracket order with
+        # SL == entry or TP == entry is rejected server-side with a cryptic
+        # error; catching it here produces a clear reason and prevents the
+        # scan loop from incrementing pending counters for a phantom fill.
+        entry = risk_params.entry_price
+        if risk_params.position_size <= 0:
+            raise ValueError(f"position_size must be > 0, got {risk_params.position_size}")
+        if risk_params.stop_loss <= 0 or risk_params.take_profit <= 0:
+            raise ValueError(
+                f"invalid SL/TP (SL={risk_params.stop_loss}, TP={risk_params.take_profit})"
+            )
+        if risk_params.stop_loss == entry or risk_params.take_profit == entry:
+            raise ValueError(
+                f"SL/TP cannot equal entry (entry={entry}, "
+                f"SL={risk_params.stop_loss}, TP={risk_params.take_profit})"
+            )
+
         order_request = MarketOrderRequest(
             symbol=symbol,
             qty=risk_params.position_size,
@@ -139,6 +156,15 @@ class AlpacaClient:
             logger.info("[DRY RUN] close_all_positions called")
             return {"requested": 0, "failed": 0, "dry_run": True}
 
+        # Count positions BEFORE calling Alpaca so a later exception can
+        # report how many close attempts were intended (not zero, which
+        # previously made the caller think nothing needed closing).
+        intended = 0
+        try:
+            intended = len(self._client.get_all_positions())
+        except Exception as e:
+            logger.warning(f"close_all_positions: pre-count failed: {e}")
+
         failed = 0
         requested = 0
         results = []
@@ -158,13 +184,27 @@ class AlpacaClient:
                         "status": status_code,
                     })
             logger.info(
-                f"close_all_positions: requested={requested}, failed={failed}"
+                f"close_all_positions: intended={intended}, "
+                f"requested={requested}, failed={failed}"
             )
         except Exception as e:
             logger.error(f"close_all_positions failed: {type(e).__name__}: {e}")
-            return {"requested": requested, "failed": requested, "error": str(e)}
+            # Report ``intended`` as failed so the caller treats a raw API
+            # failure as "all positions still open" rather than "nothing to
+            # close". The scan loop independently re-verifies via
+            # get_open_positions() and retries.
+            return {
+                "requested": intended,
+                "failed": intended,
+                "error": f"{type(e).__name__}: {e}",
+            }
 
-        return {"requested": requested, "failed": failed, "results": results}
+        return {
+            "requested": requested,
+            "failed": failed,
+            "intended": intended,
+            "results": results,
+        }
 
     def get_last_closing_fill(
         self,
