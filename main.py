@@ -17,6 +17,7 @@ from services.reconciliation_service import ReconciliationService
 from services.learning_service import LearningService
 from services.system_state_service import SystemStateService
 from services.email_service import EmailService
+from services.metrics_service import MetricsService
 from api import dashboard
 
 # Configure logging
@@ -55,11 +56,16 @@ async def lifespan(app: FastAPI):
     system_state = SystemStateService()
     email_svc = EmailService()
 
+    # Equity-curve metrics (Sharpe, Sortino, Max DD, Calmar). Snapshots
+    # are written from the scanner loop and on trade close; the service
+    # resamples to daily closes before computing.
+    metrics = MetricsService()
+
     # Create scanner early so we can pass to dashboard
     scanner = StockScanner(alpaca)
 
     # Inject into routers
-    dashboard.set_services(alpaca, journal, scanner, system_state, email_svc)
+    dashboard.set_services(alpaca, journal, scanner, system_state, email_svc, metrics)
 
     # Startup catch-up: any positions that closed while the server was
     # down won't have been reconciled yet. Do it once before anything else.
@@ -152,6 +158,30 @@ async def lifespan(app: FastAPI):
             logger.info(f"Filled {executed} slots this round")
             return executed
 
+        async def _compute_live_equity() -> float:
+            """Synthetic live equity used by the metrics service.
+
+            ``trading_capital + realized_pnl + unrealized_pnl``. We
+            intentionally DON'T use Alpaca's raw ``equity`` here because
+            the paper account starts at ~$100k but intraday bounds
+            itself to ``max_capital`` for sizing — the performance
+            metrics should track OUR bot's P&L, not the broker's full
+            balance. (The existing circuit-breaker in this file still
+            uses raw equity; changing that is out of scope for this PR.)
+            """
+            try:
+                positions = await asyncio.to_thread(alpaca.get_open_positions)
+            except Exception:
+                positions = []
+            unrealized = sum(p.get("unrealized_pnl", 0) for p in positions)
+            realized = 0.0
+            try:
+                stats = await journal.get_stats()
+                realized = stats.get("total_pnl", 0.0) or 0.0
+            except Exception:
+                pass
+            return float(settings.max_capital) + realized + unrealized
+
         def _is_past_force_close():
             """True once the force-close wall time has passed. All positions
             MUST be flat at this point — day trading invariant."""
@@ -234,6 +264,12 @@ async def lifespan(app: FastAPI):
                             await system_state.ensure_daily_snapshot(acc.get("equity", 0.0) or 0.0)
                         except Exception as e:
                             logger.warning(f"Daily snapshot failed (non-fatal): {e}")
+                        # Begin today's equity curve for the metrics service.
+                        try:
+                            live_eq = await _compute_live_equity()
+                            await metrics.record_snapshot(live_eq, source="day_start")
+                        except Exception as e:
+                            logger.debug(f"Metrics day_start snapshot failed: {e}")
 
                     # End-of-day force close — retry until positions are
                     # actually flat. The flag is only set AFTER Alpaca
@@ -289,6 +325,14 @@ async def lifespan(app: FastAPI):
                             reconciled = await reconciler.reconcile_closed_trades()
                             if reconciled:
                                 logger.info(f"Reconciled {reconciled} closed trade(s)")
+                                # Record an equity snapshot right after the
+                                # realized P&L lands so the equity curve has
+                                # an inflection point on each close.
+                                try:
+                                    live_eq = await _compute_live_equity()
+                                    await metrics.record_snapshot(live_eq, source="trade_close")
+                                except Exception as se:
+                                    logger.debug(f"Post-close snapshot failed: {se}")
                                 # Check if we hit 10 closed trades for a learning cycle
                                 try:
                                     report = await learner.check_and_learn()
@@ -315,6 +359,15 @@ async def lifespan(app: FastAPI):
                         last_position_count = current_positions
                         await asyncio.sleep(interval)
                         continue
+
+                    # Record one equity snapshot per scan tick for the metrics
+                    # service. Independent of the circuit breaker below, which
+                    # still uses raw Alpaca equity. Cheap (single DB insert).
+                    try:
+                        live_eq = await _compute_live_equity()
+                        await metrics.record_snapshot(live_eq, source="scanner_tick")
+                    except Exception as se:
+                        logger.debug(f"Metrics scanner_tick snapshot failed: {se}")
 
                     # Evaluate the daily loss threshold on the latest equity.
                     try:

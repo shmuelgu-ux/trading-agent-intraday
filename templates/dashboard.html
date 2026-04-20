@@ -136,6 +136,54 @@
             border-bottom: 2px solid #ef4444;
         }
         .safety-banner.warning { background: #78350f; color: #fde68a; border-color: #f59e0b; }
+        /* Performance metrics panel (Sharpe / Sortino / Max DD / Calmar) */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 900px) {
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 18px;
+            position: relative;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+        }
+        .metric-value {
+            font-size: 22px;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .metric-value.positive { color: #059669; }
+        .metric-value.negative { color: #dc2626; }
+        .metric-sub {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+        .metric-hint {
+            position: absolute;
+            top: 10px;
+            inset-inline-end: 12px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            cursor: help;
+        }
+        .metric-insufficient {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
         .market-timer {
             display: flex;
             align-items: center;
@@ -886,6 +934,34 @@
                 <div class="kpi-label">אחוז הצלחה</div>
                 <div class="kpi-value" id="winRate">--</div>
                 <div class="kpi-sub" id="winLoss"></div>
+            </div>
+        </div>
+
+        <!-- Performance Metrics: Sharpe, Sortino, Max DD, Calmar -->
+        <div class="metrics-grid" id="metricsGrid">
+            <div class="metric-card">
+                <div class="metric-label">Sharpe Ratio</div>
+                <div class="metric-value" id="sharpeValue">--</div>
+                <div class="metric-sub" id="sharpeSub">מחושב מ-equity curve יומי</div>
+                <span class="metric-hint" title="מעל 1 = טוב; מעל 2 = חזק; שלילי = מפסיד. מחושב על תשואות יומיות מנורמלות לסטיית תקן, בשנתי (× √252).">ⓘ</span>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Sortino Ratio</div>
+                <div class="metric-value" id="sortinoValue">--</div>
+                <div class="metric-sub" id="sortinoSub">ללא תנודתיות חיובית</div>
+                <span class="metric-hint" title="כמו Sharpe אבל מנרמל רק לתנודתיות השלילית. גבוה מ-Sharpe סימן לתשואות אסימטריות חיוביות.">ⓘ</span>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Max Drawdown</div>
+                <div class="metric-value" id="maxDdValue">--</div>
+                <div class="metric-sub" id="maxDdSub">פסגה לתחתית</div>
+                <span class="metric-hint" title="ירידה מקסימלית מהשיא לתחתית על כל ההיסטוריה, כאחוז. זה ה-&quot;כאב הכי גדול&quot; שהאסטרטגיה ייצרה.">ⓘ</span>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Calmar Ratio</div>
+                <div class="metric-value" id="calmarValue">--</div>
+                <div class="metric-sub" id="calmarSub">תשואה שנתית / Max DD</div>
+                <span class="metric-hint" title="כמה תשואה שנתית מקבלים על כל אחוז של drawdown. מעל 0.5 סביר; מעל 1 חזק.">ⓘ</span>
             </div>
         </div>
 
@@ -1656,8 +1732,67 @@
         }
 
         async function refreshAll() {
-            await Promise.all([loadStatus(), loadRisk(), loadStats(), loadJournal()]);
+            await Promise.all([loadStatus(), loadRisk(), loadStats(), loadJournal(), loadMetrics()]);
             $('lastUpdate').textContent = 'עדכון אחרון: ' + new Date().toLocaleTimeString('he-IL');
+        }
+
+        // ====================================================================
+        // Performance metrics panel (Sharpe / Sortino / Max DD / Calmar).
+        // Data is computed server-side off equity snapshots; we just format.
+        // ====================================================================
+        function fmtNum(v, digits = 2) {
+            return (v === null || v === undefined) ? '—' : Number(v).toFixed(digits);
+        }
+        function metricClass(v, goodAbove = 0) {
+            if (v === null || v === undefined) return 'metric-value';
+            return 'metric-value ' + (v > goodAbove ? 'positive' : (v < 0 ? 'negative' : ''));
+        }
+
+        async function loadMetrics() {
+            const d = await fetchJSON('/api/metrics');
+            if (!d) return;
+            const insuf = d.insufficient_data;
+            const n = d.sample_size || 0;
+            const range = d.date_range ? (d.date_range.start + ' → ' + d.date_range.end) : '';
+
+            if (insuf) {
+                const msg = n === 0
+                    ? 'אין עדיין snapshots של הון. המתן לפתיחת השוק.'
+                    : 'רק ' + n + ' יום של נתונים. צריך לפחות 2 ימים.';
+                ['sharpeValue','sortinoValue','maxDdValue','calmarValue'].forEach(id => {
+                    const el = $(id);
+                    el.className = 'metric-value';
+                    el.innerHTML = '<span class="metric-insufficient">—</span>';
+                });
+                $('sharpeSub').textContent = msg;
+                $('sortinoSub').textContent = '';
+                $('maxDdSub').textContent = '';
+                $('calmarSub').textContent = '';
+                return;
+            }
+            $('sharpeValue').textContent = fmtNum(d.sharpe, 2);
+            $('sharpeValue').className = metricClass(d.sharpe, 1);
+            $('sharpeSub').textContent = n + ' ימים · ' + range;
+
+            $('sortinoValue').textContent = fmtNum(d.sortino, 2);
+            $('sortinoValue').className = metricClass(d.sortino, 1);
+            $('sortinoSub').textContent = d.sortino === null ? 'אין ימים שליליים' : '';
+
+            if (d.max_drawdown_pct !== null && d.max_drawdown_pct !== undefined) {
+                $('maxDdValue').textContent = '-' + fmtNum(d.max_drawdown_pct, 2) + '%';
+                $('maxDdValue').className = 'metric-value ' + (d.max_drawdown_pct > 10 ? 'negative' : '');
+            } else {
+                $('maxDdValue').textContent = '—';
+                $('maxDdValue').className = 'metric-value';
+            }
+            $('maxDdSub').textContent = 'מפסגה לתחתית';
+
+            $('calmarValue').textContent = fmtNum(d.calmar, 2);
+            $('calmarValue').className = metricClass(d.calmar, 0.5);
+            const annRet = d.annualized_return_pct;
+            $('calmarSub').textContent = annRet !== null
+                ? 'תשואה שנתית: ' + (annRet >= 0 ? '+' : '') + fmtNum(annRet, 1) + '%'
+                : '';
         }
 
         // ====================================================================
