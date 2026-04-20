@@ -4,6 +4,7 @@ from services.alpaca_client import AlpacaClient
 from services.journal_service import JournalService
 from services.system_state_service import SystemStateService
 from services.email_service import EmailService
+from services.metrics_service import MetricsService
 from config import settings
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -14,6 +15,7 @@ journal: JournalService | None = None
 scanner = None
 system_state: SystemStateService | None = None
 email_svc: EmailService | None = None
+metrics: MetricsService | None = None
 scanner_state = {
     "started": False,
     "market_open_seen": False,
@@ -29,8 +31,9 @@ def set_services(
     scanner_obj=None,
     system_state_service: SystemStateService | None = None,
     email_service: EmailService | None = None,
+    metrics_service: MetricsService | None = None,
 ):
-    global alpaca, journal, scanner, system_state, email_svc
+    global alpaca, journal, scanner, system_state, email_svc, metrics
     alpaca = alpaca_client
     journal = journal_service
     if scanner_obj:
@@ -39,6 +42,23 @@ def set_services(
         system_state = system_state_service
     if email_service:
         email_svc = email_service
+    if metrics_service:
+        metrics = metrics_service
+
+
+@router.get("/metrics")
+async def get_metrics(lookback_days: int | None = None):
+    """Sharpe, Sortino, Max Drawdown, Calmar + supporting context.
+
+    ``lookback_days`` optionally restricts the window (e.g. ``?lookback_days=30``
+    for a 30-day view). Omitted = full history.
+    """
+    if not metrics:
+        return {"insufficient_data": True, "error": "metrics not initialized"}
+    try:
+        return await metrics.compute(lookback_days=lookback_days)
+    except Exception as e:
+        return {"insufficient_data": True, "error": f"{type(e).__name__}: {e}"}
 
 
 @router.get("/status")

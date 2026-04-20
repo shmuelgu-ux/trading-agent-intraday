@@ -88,6 +88,38 @@ class SystemState(Base):
     circuit_breaker_fired_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
 
 
+class EquitySnapshot(Base):
+    """Time-series of equity points used for performance metrics.
+
+    Rows are appended from the scanner loop (per-tick while market is
+    open) and on trade close events. The ``MetricsService`` resamples
+    to daily closes before computing Sharpe / Sortino / Max DD / Calmar.
+
+    ``source`` is one of:
+
+    - ``"scanner_tick"``: periodic while market open
+    - ``"trade_close"``: post-reconciliation after a position closed
+    - ``"day_start"`` / ``"day_end"``: market open / close bookends
+    - ``"manual"``: explicit API call (for testing / backfill)
+
+    ``equity`` is our synthetic live equity:
+    ``max_capital + realized_pnl + unrealized_pnl``. NOT raw Alpaca
+    equity — see ``_compute_live_equity`` in ``main.py`` for why.
+    """
+    __tablename__ = "equity_snapshot"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=_utc_naive_now, nullable=False)
+    equity: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(Text, default="scanner_tick", nullable=False)
+
+    __table_args__ = (
+        # Metrics queries ORDER BY timestamp ASC so the index speeds up
+        # both the full-history and time-window reads.
+        Index("ix_equity_snapshot_timestamp", "timestamp"),
+    )
+
+
 class LearningReport(Base):
     """Stores the output of each learning cycle (every 10 closed trades)."""
     __tablename__ = "learning_report"
@@ -118,6 +150,7 @@ _INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS ix_trade_log_ticker ON trade_log (ticker)",
     "CREATE INDEX IF NOT EXISTS ix_trade_log_status_action ON trade_log (status, action_taken)",
     "CREATE INDEX IF NOT EXISTS ix_trade_log_ticker_action ON trade_log (ticker, action_taken)",
+    "CREATE INDEX IF NOT EXISTS ix_equity_snapshot_timestamp ON equity_snapshot (timestamp)",
 )
 
 
