@@ -96,26 +96,27 @@ class TestValidation:
         assert not is_valid
         assert any("סיכון כולל" in r for r in reasons)
 
-    def test_buy_against_downtrend(self):
+    def test_buy_against_downtrend_now_passes(self):
+        """Trend-alignment filter removed for Donchian — breakout IS the
+        trend signal, EMA-trend check was redundant."""
         rm = RiskManager()
         signal = make_signal(ema_trend="down")
-        is_valid, reasons = rm.validate_trade(signal, 2000, [], 0.0)
-        assert not is_valid
-        assert any("נגד הטרנד" in r for r in reasons)
+        is_valid, _ = rm.validate_trade(signal, 2000, [], 0.0)
+        assert is_valid
 
-    def test_sell_against_uptrend(self):
+    def test_sell_against_uptrend_now_passes(self):
+        """Same logic applied symmetrically to SELL signals."""
         rm = RiskManager()
         signal = make_signal(action=SignalAction.SELL, ema_trend="up")
-        is_valid, reasons = rm.validate_trade(signal, 2000, [], 0.0)
-        assert not is_valid
-        assert any("נגד הטרנד" in r for r in reasons)
+        is_valid, _ = rm.validate_trade(signal, 2000, [], 0.0)
+        assert is_valid
 
-    def test_rsi_too_high_for_buy(self):
+    def test_rsi_too_high_for_buy_now_passes(self):
+        """RSI > 75 at a new breakout high is normal. Filter removed."""
         rm = RiskManager()
         signal = make_signal(rsi=80.0)
-        is_valid, reasons = rm.validate_trade(signal, 2000, [], 0.0)
-        assert not is_valid
-        assert any("RSI" in r for r in reasons)
+        is_valid, _ = rm.validate_trade(signal, 2000, [], 0.0)
+        assert is_valid
 
     def test_no_atr_rejects(self):
         rm = RiskManager()

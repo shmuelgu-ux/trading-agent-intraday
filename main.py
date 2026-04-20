@@ -10,7 +10,7 @@ from loguru import logger
 from config import settings
 from core.risk_manager import RiskManager
 from core.decision_engine import DecisionEngine
-from core.scanner import StockScanner
+from core.donchian_scanner import DonchianStockScanner
 from services.alpaca_client import AlpacaClient
 from services.journal_service import JournalService
 from services.reconciliation_service import ReconciliationService
@@ -61,8 +61,12 @@ async def lifespan(app: FastAPI):
     # resamples to daily closes before computing.
     metrics = MetricsService()
 
-    # Create scanner early so we can pass to dashboard
-    scanner = StockScanner(alpaca)
+    # Donchian breakout scanner (replaces the old indicator-voting
+    # StockScanner). Intraday uses entry_lookback=10; backtest showed
+    # Sharpe 0.95 on this config with 1-day holds (EOD-force-closed).
+    # The in-day exit (hard SL + EOD force-close) serves as the exit
+    # rule; no separate channel-exit monitor is needed.
+    scanner = DonchianStockScanner(alpaca, entry_lookback=10)
 
     # Inject into routers
     dashboard.set_services(alpaca, journal, scanner, system_state, email_svc, metrics)
