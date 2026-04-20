@@ -38,18 +38,27 @@ class LearningService:
                 )
             )).scalar() or 0
 
-            # How many trades have we already analyzed?
-            already_analyzed = 0
+            # Track the highest analyzed trade id across all reports so we
+            # only ever consider trades strictly newer than the last batch.
+            # Previously we fetched ``most recent BATCH_SIZE`` which skipped
+            # older unanalyzed rows the first time around and then analyzed
+            # the same trades twice on subsequent cycles (bloating stats).
             last_report = (await session.execute(
                 select(LearningReport)
                 .order_by(LearningReport.id.desc())
                 .limit(1)
             )).scalar_one_or_none()
 
+            last_analyzed_id = 0
+            already_analyzed = 0
             if last_report:
-                # Count IDs in the last report's trade_ids
-                prev_ids = set(last_report.trade_ids.split(",")) if last_report.trade_ids else set()
-                # Total analyzed = sum of all reports' trade counts
+                if last_report.trade_ids:
+                    try:
+                        last_analyzed_id = max(
+                            int(x) for x in last_report.trade_ids.split(",") if x
+                        )
+                    except ValueError:
+                        last_analyzed_id = 0
                 total_analyzed_q = await session.execute(
                     select(func.sum(LearningReport.trade_count))
                 )
@@ -61,17 +70,20 @@ class LearningService:
 
             logger.info(
                 f"Learning cycle triggered: {new_closed} new closed trades "
-                f"(total={total_closed}, analyzed={already_analyzed})"
+                f"(total={total_closed}, analyzed={already_analyzed}, "
+                f"last_id={last_analyzed_id})"
             )
 
-            # Fetch the BATCH_SIZE most recent unanalyzed closed trades
+            # Fetch the NEXT BATCH_SIZE unanalyzed closed trades in
+            # chronological order (id > last_analyzed_id, oldest first).
             all_closed = (await session.execute(
                 select(TradeLog)
                 .where(
                     TradeLog.status == "CLOSED",
                     TradeLog.action_taken == "EXECUTE",
+                    TradeLog.id > last_analyzed_id,
                 )
-                .order_by(TradeLog.id.desc())
+                .order_by(TradeLog.id.asc())
                 .limit(BATCH_SIZE)
             )).scalars().all()
 

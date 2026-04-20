@@ -84,6 +84,15 @@ class RiskManager:
             logger.warning(f"[{signal.ticker}] No ATR provided, cannot calculate risk")
             return None
 
+        # A non-positive balance can't size a trade and previously produced
+        # a bogus 100%-risk fallback that slipped past downstream checks.
+        if account_balance <= 0:
+            logger.warning(
+                f"[{signal.ticker}] Non-positive account balance ({account_balance}), "
+                f"cannot size trade"
+            )
+            return None
+
         stop_loss = self.calculate_stop_loss(signal.price, atr, signal.action)
         take_profit = self.calculate_take_profit(signal.price, stop_loss, signal.action)
         position_size = self.calculate_position_size(
@@ -95,8 +104,17 @@ class RiskManager:
             return None
 
         risk_per_share = abs(signal.price - stop_loss)
+        if risk_per_share <= 0:
+            # Defensive: position_size>0 guard above normally protects this,
+            # but belt-and-braces in case rounding collapses entry == SL.
+            logger.warning(
+                f"[{signal.ticker}] risk_per_share collapsed to 0 "
+                f"(entry={signal.price}, SL={stop_loss})"
+            )
+            return None
+
         risk_amount = risk_per_share * position_size
-        risk_percent = risk_amount / account_balance if account_balance > 0 else 1.0
+        risk_percent = risk_amount / account_balance
         rr_ratio = abs(take_profit - signal.price) / risk_per_share
 
         return RiskParams(
