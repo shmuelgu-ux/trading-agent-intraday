@@ -136,6 +136,46 @@
             border-bottom: 2px solid #ef4444;
         }
         .safety-banner.warning { background: #78350f; color: #fde68a; border-color: #f59e0b; }
+        /* Paper-trading countdown — anchors users to the 3/6-month panel */
+        .paper-countdown {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px 18px;
+            margin-bottom: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+        }
+        .pc-icon { font-size: 22px; }
+        .pc-label { font-weight: 600; font-size: 13px; color: var(--text-secondary); }
+        .pc-day { font-weight: 700; font-size: 17px; }
+        .pc-next { font-size: 13px; color: var(--text-secondary); margin-inline-start: auto; }
+        .pc-progress {
+            flex-basis: 100%;
+            height: 6px;
+            background: rgba(0,0,0,0.06);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .pc-bar {
+            height: 100%;
+            background: linear-gradient(to right, #059669, #10b981);
+            transition: width 0.4s ease;
+            width: 0%;
+        }
+        .pc-milestone {
+            display: inline-block;
+            padding: 2px 9px;
+            border-radius: 100px;
+            background: rgba(5, 150, 105, 0.1);
+            color: #059669;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .pc-milestone.reached { background: rgba(5, 150, 105, 0.2); }
         /* Performance metrics panel (Sharpe / Sortino / Max DD / Calmar) */
         .metrics-grid {
             display: grid;
@@ -904,6 +944,16 @@
     <div id="safetyBanner" class="safety-banner" style="display:none;"></div>
 
     <div class="container">
+        <!-- Paper-trading countdown. Start 2026-04-20, 3m 2026-07-20, 6m 2026-10-20. -->
+        <div class="paper-countdown" id="paperCountdown">
+            <span class="pc-icon">📅</span>
+            <span class="pc-label">Paper Trading</span>
+            <span class="pc-day" id="pcDay">—</span>
+            <span class="pc-milestone" id="pcPhase">—</span>
+            <span class="pc-next" id="pcNext">—</span>
+            <div class="pc-progress"><div class="pc-bar" id="pcBar"></div></div>
+        </div>
+
         <!-- KPI Cards -->
         <div class="kpi-grid">
             <div class="kpi">
@@ -1733,8 +1783,53 @@
 
         async function refreshAll() {
             await Promise.all([loadStatus(), loadRisk(), loadStats(), loadJournal(), loadMetrics()]);
+            updatePaperCountdown();
             $('lastUpdate').textContent = 'עדכון אחרון: ' + new Date().toLocaleTimeString('he-IL');
         }
+
+        // ====================================================================
+        // Paper-trading countdown. Hardcoded dates so the widget works
+        // regardless of backend state. Matches the swing bot's widget
+        // exactly — identical code path, identical dates.
+        // ====================================================================
+        const PC_START = new Date('2026-04-20T00:00:00');
+        const PC_3M = new Date('2026-07-20T00:00:00');
+        const PC_6M = new Date('2026-10-20T00:00:00');
+
+        function updatePaperCountdown() {
+            const MS_PER_DAY = 24 * 60 * 60 * 1000;
+            const now = new Date();
+            const daysElapsed = Math.max(0, Math.floor((now - PC_START) / MS_PER_DAY));
+            const totalDays = Math.floor((PC_6M - PC_START) / MS_PER_DAY);
+            const to3m = Math.ceil((PC_3M - now) / MS_PER_DAY);
+            const to6m = Math.ceil((PC_6M - now) / MS_PER_DAY);
+
+            $('pcDay').textContent = 'יום ' + daysElapsed + ' מתוך ' + totalDays;
+
+            const phase = $('pcPhase');
+            const next = $('pcNext');
+            if (to3m > 0) {
+                phase.textContent = 'שלב 1 (טרם 3 חודשים)';
+                phase.className = 'pc-milestone';
+                next.textContent = 'בדיקת 3 חודשים: עוד ' + to3m + ' ימים';
+            } else if (to6m > 0) {
+                phase.textContent = 'שלב 2 (בין 3 ל-6 חודשים)';
+                phase.className = 'pc-milestone reached';
+                next.textContent = 'בדיקת 6 חודשים: עוד ' + to6m + ' ימים';
+            } else {
+                phase.textContent = 'סיום הפאנל';
+                phase.className = 'pc-milestone reached';
+                const over = Math.abs(to6m);
+                next.textContent = over === 0
+                    ? 'הגענו ליעד — זמן להחליט על שלב ב\''
+                    : over + ' ימים מעבר למועד — זמן להחליט';
+            }
+
+            const pct = Math.min(100, Math.max(0, (daysElapsed / totalDays) * 100));
+            $('pcBar').style.width = pct.toFixed(1) + '%';
+        }
+
+        document.addEventListener('DOMContentLoaded', updatePaperCountdown);
 
         // ====================================================================
         // Performance metrics panel (Sharpe / Sortino / Max DD / Calmar).
