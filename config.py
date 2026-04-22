@@ -19,18 +19,27 @@ class Settings(BaseSettings):
     # Capital Management
     max_capital: float = Field(default=2000.0, gt=0)
 
-    # Risk Parameters — intraday
-    # Smaller per-trade risk because intraday runs many more trades than
-    # swing; a 20% daily loss cap allows ~20 losing trades before we stop.
+    # Risk Parameters — intraday Donchian breakout.
+    # 1% per-trade risk — the 20% daily cap allows ~20 losing trades
+    # before the risk budget closes the day.
     max_risk_per_trade: float = Field(default=0.01, ge=0.001, le=0.05)
     max_total_risk: float = Field(default=0.20, ge=0.01, le=0.50)
     max_open_positions: int = Field(default=20, ge=1, le=30)
-    default_rr_ratio: float = Field(default=1.5, ge=1.0, le=5.0)
+    # High default so the bracket order's take-profit leg is effectively
+    # out of reach — the Donchian intraday strategy doesn't use a fixed
+    # RR target; the real exit is EOD force-close at 15:55 ET.
+    # NOTE: this line was supposed to ship in PR #5 (live wiring) but
+    # was left out of the commit by mistake. That's why the intraday bot
+    # was running the new scanner with the OLD tight 1.5:1 RR for its
+    # first two days, causing every position to fall into either a
+    # close TP hit or an EOD noise exit — 18% win rate on ~22 closed
+    # trades vs. the ~45% seen in backtest. This PR corrects that.
+    default_rr_ratio: float = Field(default=20.0, ge=1.0, le=100.0)
 
-    # ATR-based Stop Loss multiplier — 1.5x ATR gives the trade room
-    # to breathe past normal intraday noise. At 1.0x, 80% of trades
-    # were getting stopped out by single-candle noise before reaching TP.
-    atr_sl_multiplier: float = Field(default=1.5, ge=0.5, le=3.0)
+    # ATR-based Stop Loss multiplier — 1.5x ATR matches the backtest-
+    # validated Donchian intraday sweet spot. (le bumped from 3.0 so
+    # env-overrides can experiment with wider stops if needed.)
+    atr_sl_multiplier: float = Field(default=1.5, ge=0.5, le=5.0)
 
     # Scanner — 15-minute bars, scan every few minutes during market hours
     scanner_enabled: bool = True
