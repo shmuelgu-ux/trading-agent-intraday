@@ -944,7 +944,9 @@
     <div id="safetyBanner" class="safety-banner" style="display:none;"></div>
 
     <div class="container">
-        <!-- Paper-trading countdown. Start 2026-04-20, 3m 2026-07-20, 6m 2026-10-20. -->
+        <!-- Paper-trading countdown. Reset 2026-04-22 after we found two
+             bugs that meant the bots weren't trading Donchian correctly
+             for the first two days. 3m 2026-07-22, 6m 2026-10-22. -->
         <div class="paper-countdown" id="paperCountdown">
             <span class="pc-icon">📅</span>
             <span class="pc-label">Paper Trading</span>
@@ -1788,13 +1790,14 @@
         }
 
         // ====================================================================
-        // Paper-trading countdown. Hardcoded dates so the widget works
-        // regardless of backend state. Matches the swing bot's widget
-        // exactly — identical code path, identical dates.
+        // Paper-trading countdown. Reset 2026-04-22 after the zero-volume
+        // scan crash (swing) and missing config.py commit (intraday)
+        // meant the bots didn't trade Donchian correctly for the first
+        // two days. Matches the swing widget — same dates, same math.
         // ====================================================================
-        const PC_START = new Date('2026-04-20T00:00:00');
-        const PC_3M = new Date('2026-07-20T00:00:00');
-        const PC_6M = new Date('2026-10-20T00:00:00');
+        const PC_START = new Date('2026-04-22T00:00:00');
+        const PC_3M = new Date('2026-07-22T00:00:00');
+        const PC_6M = new Date('2026-10-22T00:00:00');
 
         function updatePaperCountdown() {
             const MS_PER_DAY = 24 * 60 * 60 * 1000;

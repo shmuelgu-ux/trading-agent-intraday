@@ -178,7 +178,18 @@ class DonchianStockScanner:
             # Sort by how far the close punched through the channel top
             # (biggest breakouts first — usually the strongest moves).
             all_readings.sort(key=lambda r: r.breakout_pct, reverse=True)
-            signals = [self._to_signal(r) for r in all_readings]
+            # Convert each reading to a TradingViewSignal in isolation —
+            # a single bad ticker (e.g. pydantic validation failure on a
+            # zero-volume bar) must NOT kill the whole scan. Previously
+            # a single ValidationError inside a list-comprehension caused
+            # the scanner to return 0 signals and the bot to sit idle.
+            signals: list[TradingViewSignal] = []
+            for r in all_readings:
+                try:
+                    signals.append(self._to_signal(r))
+                except Exception as e:
+                    logger.debug(f"DonchianScanner skip {r.symbol} in to_signal: {e}")
+                    continue
             self.state["last_signals_found"] = len(signals)
             logger.info(f"DonchianScanner: {len(signals)} breakout signals")
             return signals
@@ -289,10 +300,17 @@ class DonchianStockScanner:
             if atr <= 0:
                 return None
 
-            # Volume ratio for logging / context (not a filter).
+            # Volume ratio for logging / context (not a filter). Clamp to
+            # a tiny positive number — the downstream ``Indicators`` model
+            # enforces ``volume_ratio > 0``, and a ticker with zero volume
+            # on its latest bar (halted? data gap?) should still be
+            # reportable in context rather than crash the whole scan.
             last_vol = float(latest.volume)
             avg_vol = sum(float(b.volume) for b in recent) / len(recent)
-            vol_ratio = last_vol / avg_vol if avg_vol > 0 else 1.0
+            if avg_vol > 0:
+                vol_ratio = max(last_vol / avg_vol, 0.01)
+            else:
+                vol_ratio = 1.0
 
             return _BreakoutReading(
                 symbol=symbol, close=close,
