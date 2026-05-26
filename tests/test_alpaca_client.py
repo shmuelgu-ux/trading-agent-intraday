@@ -136,3 +136,48 @@ def test_passes_correct_side_enum_to_alpaca():
     client.get_last_closing_fill("AAPL", "sell", after=now)
     req = client._client.get_orders.call_args.kwargs["filter"]
     assert req.side == OrderSide.SELL
+
+
+# ---------------------------------------------------------------------------
+# is_market_open — Alpaca clock wrapper
+# ---------------------------------------------------------------------------
+
+
+def _client_with_clock(is_open):
+    """Build an AlpacaClient whose get_clock returns a mock with is_open."""
+    c = AlpacaClient.__new__(AlpacaClient)
+    c._client = MagicMock()
+    c._data_client = None
+    clock = MagicMock()
+    clock.is_open = is_open
+    c._client.get_clock.return_value = clock
+    return c
+
+
+def test_is_market_open_returns_true_when_clock_is_open():
+    client = _client_with_clock(True)
+    assert client.is_market_open() is True
+
+
+def test_is_market_open_returns_false_when_clock_is_closed():
+    client = _client_with_clock(False)
+    assert client.is_market_open() is False
+
+
+def test_is_market_open_returns_none_when_no_client():
+    """Dry-run mode (no API keys) should return None so callers fall back."""
+    c = AlpacaClient.__new__(AlpacaClient)
+    c._client = None
+    c._data_client = None
+    assert c.is_market_open() is None
+
+
+def test_is_market_open_returns_none_on_exception():
+    """Any error from Alpaca must surface as None (never raise) so the
+    scanner loop is not killed by a transient connection issue.
+    """
+    c = AlpacaClient.__new__(AlpacaClient)
+    c._client = MagicMock()
+    c._data_client = None
+    c._client.get_clock.side_effect = RuntimeError("network down")
+    assert c.is_market_open() is None

@@ -40,6 +40,25 @@ class AlpacaClient:
     def is_connected(self) -> bool:
         return self._client is not None
 
+    def is_market_open(self) -> bool | None:
+        """Return Alpaca's authoritative is_open flag from /v2/clock.
+
+        Returns True/False on success, or None on any failure. Callers must
+        treat None as "unknown" and fall back to their own conservative
+        check — this method never raises so the scanner loop can rely on it.
+
+        Alpaca's clock respects US market holidays (e.g. Memorial Day,
+        Thanksgiving, etc.) which a pure weekday/time check does not.
+        """
+        if not self._client:
+            return None
+        try:
+            clock = self._client.get_clock()
+            return bool(clock.is_open)
+        except Exception as e:
+            logger.warning(f"get_clock failed (treating as unknown): {e}")
+            return None
+
     def get_account(self) -> dict:
         """Get account info (balance, buying power, etc.)."""
         if not self._client:

@@ -94,3 +94,57 @@ async def test_journal_is_called():
     await engine.process_signal(signal)
 
     engine.journal.log_trade.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _is_market_open — holiday-aware via Alpaca clock
+# ---------------------------------------------------------------------------
+
+
+def test_market_open_prefers_alpaca_clock_true():
+    """When Alpaca's clock says open, trust it regardless of weekday/time."""
+    engine = make_engine()
+    engine.alpaca.is_market_open.return_value = True
+    assert engine._is_market_open() is True
+
+
+def test_market_open_prefers_alpaca_clock_false_on_holiday():
+    """The real Memorial Day 2026 bug: a regular Monday at 14:00 ET would
+    pass the weekday/time fallback, but Alpaca's clock correctly returns
+    False on the holiday. We must trust Alpaca, not the fallback.
+    """
+    engine = make_engine()
+    engine.alpaca.is_market_open.return_value = False
+    assert engine._is_market_open() is False
+
+
+def test_market_open_falls_back_when_clock_returns_none_weekday_open():
+    """If Alpaca's clock is unreachable, fall back to weekday+time check.
+    Patch _now_et so the test is deterministic regardless of when it runs.
+    """
+    import datetime as _dt, zoneinfo
+    engine = make_engine()
+    engine.alpaca.is_market_open.return_value = None
+    monday_noon_et = _dt.datetime(2026, 6, 1, 12, 0, tzinfo=zoneinfo.ZoneInfo("America/New_York"))
+    with patch.object(engine, "_now_et", return_value=monday_noon_et):
+        assert engine._is_market_open() is True
+
+
+def test_market_open_falls_back_when_clock_returns_none_weekend():
+    """Fallback correctly recognises weekends even without Alpaca."""
+    import datetime as _dt, zoneinfo
+    engine = make_engine()
+    engine.alpaca.is_market_open.return_value = None
+    saturday_noon_et = _dt.datetime(2026, 5, 30, 12, 0, tzinfo=zoneinfo.ZoneInfo("America/New_York"))
+    with patch.object(engine, "_now_et", return_value=saturday_noon_et):
+        assert engine._is_market_open() is False
+
+
+def test_market_open_falls_back_when_clock_returns_none_after_hours():
+    """Fallback rejects 18:00 ET (after the 16:00 close) on a weekday."""
+    import datetime as _dt, zoneinfo
+    engine = make_engine()
+    engine.alpaca.is_market_open.return_value = None
+    monday_evening = _dt.datetime(2026, 6, 1, 18, 0, tzinfo=zoneinfo.ZoneInfo("America/New_York"))
+    with patch.object(engine, "_now_et", return_value=monday_evening):
+        assert engine._is_market_open() is False
