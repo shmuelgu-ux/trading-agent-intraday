@@ -139,7 +139,20 @@ class DecisionEngine:
             return datetime.now(pytz.timezone("America/New_York"))
 
     def _is_market_open(self) -> bool:
-        """Check if US market is currently open."""
+        """Check if US market is currently open.
+
+        Primary source: Alpaca's `/v2/clock` (respects US market holidays).
+        Fallback (when Alpaca is unreachable or returns None): weekday +
+        time-of-day check. The fallback intentionally does NOT know about
+        holidays — that's the whole point of preferring Alpaca's clock —
+        so on a holiday with a broken clock connection the scanner will
+        still over-run, which we accept as a strictly better failure
+        mode than scanning every holiday by default.
+        """
+        clock_says = self.alpaca.is_market_open()
+        if clock_says is not None:
+            return clock_says
+        # Fallback: weekday + time-of-day (no holiday awareness).
         et = self._now_et()
         if et.weekday() >= 5:  # Weekend
             return False
